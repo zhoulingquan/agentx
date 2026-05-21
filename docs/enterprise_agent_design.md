@@ -1,0 +1,2545 @@
+# Enterprise Fixed-Workflow Agent 技术设计文档
+
+版本：v0.1  
+日期：2026-05-21  
+定位：面向企业级多场景应用的稳定型 AI Agent 架构设计
+
+## 1. 背景与目标
+
+本设计面向企业级应用中的多类固定或半固定流程场景，例如合同审查、审批流辅助、财务分析、客服处理、销售运营、知识检索、工单处理、数据分析等。
+
+系统目标不是构建一个完全自由探索型 Agent，而是构建一个以稳定输出为前提、允许有限自主规划的 Agent 平台。
+
+核心目标：
+
+1. 支持主 Agent + 可自定义数量的子 Agent 编排结构。
+2. 子 Agent 角色可以自定义，并通过 Role Profile 约束职责、行为边界和输出要求。
+3. 子 Agent 可以绑定固定工作流，每个工作流节点可以挂载自定义 Skill。
+4. 主 Agent 负责任务拆解、子 Agent 调度、结果校验与汇总报告。
+5. 主 Agent 和子 Agent 可以分别配置可用工具与权限。
+6. 支持多层 Memory：全局 Session / Working / Short-term / Long-term Memory，以及子 Agent 独立 Memory。
+7. 提供 Context Manager，统一管理上下文选择、压缩、预算、证据和权限。
+8. 提供 Evaluation Layer，对输出真实性、正确性、完整性、一致性和风险进行评估。
+9. 对写入类、高风险类、低置信度类操作提供 Human-in-the-loop 机制。
+10. 当前暂不要求多租户，但架构需要预留租户、部门、权限域扩展空间。
+
+## 2. 设计原则
+
+### 2.1 稳定优先
+
+企业级 Agent 不应依赖模型自由发挥来完成关键流程。系统应通过固定 Workflow、Schema 校验、工具权限、规则校验、审计日志和回放机制保证稳定性。
+
+### 2.2 有限自主规划
+
+主 Agent 可以做任务拆解和子 Agent 选择，但自主范围必须被约束在可注册、可审计、可验证的能力集合内。
+
+主 Agent 可以决定：
+
+1. 当前任务属于哪个业务场景。
+2. 应该调用哪些子 Agent。
+3. 子任务之间的依赖关系。
+4. 是否需要向用户补充确认。
+
+主 Agent 不应该绕过：
+
+1. Workflow 定义。
+2. Tool Registry 权限。
+3. Human Gate 策略。
+4. Output Schema 校验。
+5. Memory Policy 与 Promotion Policy。
+6. 审计与追踪系统。
+
+### 2.3 场景包化
+
+平台本身应保持通用，具体业务场景通过 Scenario Pack 扩展。
+
+一个 Scenario Pack 包含：
+
+1. 场景定义。
+2. 子 Agent 定义。
+3. Workflow 定义。
+4. Skill 实现。
+5. Tool 权限策略。
+6. 输入输出 Schema。
+7. Context Policy。
+8. Evaluation Policy。
+9. Global Memory 与子 Agent Local Memory 读写策略。
+10. 测试用例和 Golden Cases。
+
+### 2.4 MVP 收敛原则
+
+平台能力应分阶段出现，第一版目标不是一次性建成完整企业 Agent 平台，而是验证一条稳定、可回放、可审计的业务黄金路径。
+
+Phase 1 应优先满足：
+
+1. 一个高价值场景，例如合同审查或审批辅助。
+2. 2 到 3 个固定子 Agent。
+3. 固定或半固定 Workflow。
+4. Session Memory 与 Working Memory。
+5. Schema 校验、规则校验、必填项校验和证据引用检查。
+6. Tool Gateway、Human Gate、Audit Log 的最小闭环。
+7. 一个小规模 Golden Case 集合。
+
+Phase 1 不应默认启用：
+
+1. Agent 自动写入 Long-term Memory。
+2. 多场景可视化配置平台。
+3. 完整 Episode Search。
+4. Core Memory Snapshot 自动刷新。
+5. 大规模 LLM-as-judge 在线评估。
+6. 复杂多租户权限模型。
+
+高级能力可以在代码和数据模型中预留接口，但应通过 feature flag、场景级配置和灰度策略逐步打开。
+
+## 3. 总体架构
+
+```mermaid
+flowchart TD
+    U["User / Enterprise System"] --> API["Agent API"]
+    API --> MA["Main Agent Orchestrator"]
+
+    MA --> PC["Planning Controller"]
+    MA --> AR["Agent Router"]
+    MA --> AG["Result Aggregator"]
+    MA --> HM["Human-in-the-loop Manager"]
+    MA --> CM["Context Manager"]
+    MA --> EV["Evaluation Layer"]
+
+    CM --> MM["Memory Manager"]
+    MM --> SM["Global Session Memory"]
+    MM --> WM["Global Working Memory"]
+    MM --> STM["Global Short-term Memory"]
+    MM --> LTM["Global Long-term Memory"]
+
+    AR --> RR["Role Registry"]
+    AR --> SAR["Sub-agent Registry"]
+    RR --> SAR
+    SAR --> SA["Sub Agents 1..N"]
+    SA --> SAM["Local Memory per Sub-agent"]
+    SAM --> MM
+    SA --> WE["Workflow Engine per Sub-agent"]
+
+    WE --> CM
+    WE --> EV
+    WE --> SK["Skill Registry"]
+    WE --> TG["Tool Gateway"]
+
+    TG --> TR["Tool Registry"]
+    TG --> PE["Policy Engine"]
+    TG --> EXT["Enterprise APIs / DB / SaaS"]
+    TG --> CM
+
+    MA --> AUD["Audit Log"]
+    CM --> AUD
+    EV --> AUD
+    TG --> AUD
+    WE --> OBS["Tracing / Metrics"]
+```
+
+## 4. 核心模块
+
+### 4.1 Main Agent Orchestrator
+
+主 Agent 是系统的大脑，但不是所有能力的直接执行者。它主要承担编排职责。
+
+工程实现上建议把主 Agent 拆成两层：
+
+1. Deterministic Orchestrator：唯一拥有执行控制权，负责状态机、DAG 调度、权限检查、重试、超时、Human Gate、审计和回放。
+2. LLM Planner：只负责生成候选 Task Plan、候选子任务拆解和候选说明，不直接调用工具、不直接写 Memory、不直接推进 Workflow。
+
+也就是说，LLM Planner 可以提出计划，但所有计划必须先经过 Schema、Policy、Workflow、Tool Permission 和 Human Gate 校验，之后才由 Deterministic Orchestrator 执行。
+
+主要职责：
+
+1. 理解用户目标。
+2. 补全任务上下文。
+3. 判断任务所属场景。
+4. 请求 LLM Planner 生成候选 Task Plan。
+5. 校验、冻结并执行 Task Plan。
+6. 拆解 Sub-task。
+7. 选择合适的 Sub Agent。
+8. 管理子任务依赖关系。
+9. 汇总子 Agent 输出。
+10. 执行结果一致性校验。
+11. 触发 Human Gate。
+12. 输出最终报告。
+13. 调用 Context Manager 构造任务级上下文。
+14. 调用 Evaluation Layer 评估子 Agent 输出和最终报告。
+15. 协调 Global Memory 与子 Agent Local Memory 的读写边界。
+16. 写入必要 Memory 和审计日志。
+
+主 Agent 不应把自然语言计划直接当作可执行计划。所有可执行计划都应转成结构化 Task Plan，并由 Plan Validator 检查：
+
+1. 子 Agent 是否已注册且启用。
+2. 子任务是否符合对应 Input Schema。
+3. Workflow 是否存在且版本可用。
+4. 所需工具是否在 Tool Policy 白名单内。
+5. 高风险节点是否绑定 Human Gate。
+6. Evaluation Policy 是否覆盖当前风险等级。
+7. 并发、超时、重试和成本预算是否满足场景约束。
+
+### 4.2 Sub Agent
+
+子 Agent 面向具体能力域或业务流程，执行方式应尽量固定。
+
+子 Agent 的数量不应在代码中写死，而应由 Scenario Pack 或运行时 Agent Registry 声明。主 Agent 只依赖 Agent Registry 中注册的能力、输入输出 Schema、权限策略和可用状态来调度子 Agent。
+
+子 Agent 的角色也不应写死。角色应通过 Role Profile 自定义，并由 Agent Profile 引用。这样同一个子 Agent Runtime 可以在不同场景中扮演不同角色，例如：
+
+1. `researcher`：检索和整理证据。
+2. `risk_reviewer`：识别风险和给出风险等级。
+3. `calculator`：执行确定性计算和复核。
+4. `writer`：生成结构化报告。
+5. `critic`：复核其他子 Agent 的输出。
+6. `operator`：在用户确认后执行写入类操作。
+
+Role Profile 应定义：
+
+1. 角色目标：该角色负责什么。
+2. 行为边界：该角色不能做什么。
+3. 允许的任务类型和能力标签。
+4. 输出格式和证据要求。
+5. 风险等级和 Human Gate 要求。
+6. 默认 Context / Memory / Evaluation 约束。
+7. 失败时的处理策略。
+
+一个场景可以配置：
+
+1. 只有一个子 Agent，适合简单固定流程。
+2. 多个顺序子 Agent，适合文档解析、风险判断、报告生成等流水线。
+3. 多个并行子 Agent，适合多角度审查、交叉验证、数据并行分析。
+4. 必选子 Agent 和可选子 Agent，适合按任务复杂度动态扩展。
+5. 禁用或灰度子 Agent，适合版本升级和 A/B 测试。
+
+子 Agent 由以下部分组成：
+
+1. Agent Profile：子 Agent 元信息。
+2. Role Profile：子 Agent 的职责、边界和输出要求。
+3. Input Schema：输入结构约束。
+4. Output Schema：输出结构约束。
+5. Workflow：固定流程定义。
+6. Skill Set：可调用技能集合。
+7. Tool Policy：可调用工具和权限范围。
+8. Local Memory System：该子 Agent 的独立记忆系统。
+9. Memory Policy：允许读取、写入、提升和共享的记忆范围。
+10. Context Policy：定义该子 Agent 每个 Workflow 节点可使用的上下文范围和预算。
+11. Evaluation Policy：定义该子 Agent 输出需要经过哪些评估。
+12. Evaluation Cases：该子 Agent 的测试样例。
+
+子 Agent 的独立 Memory 不等同于全局 Memory 的简单子集。它应当保存该子 Agent 在自己能力域内长期稳定需要的信息，例如领域规则命中历史、工作流中间偏好、局部经验、历史执行摘要和该子 Agent 的失败修正记录。
+
+子 Agent 只能默认读取自己的 Local Memory。若需要读取其他子 Agent 的记忆，必须通过 Main Agent 或 Memory Manager 进行受控共享。
+
+### 4.3 Workflow Engine
+
+Workflow Engine 负责执行子 Agent 的固定流程。
+
+支持节点类型：
+
+| Node 类型 | 用途 |
+|---|---|
+| rule | 确定性规则校验，例如字段完整性、金额阈值、权限判断 |
+| skill | 调用业务 Skill，例如合同条款抽取、客户分类、指标计算 |
+| tool | 调用 Tool Registry 中注册的工具 |
+| llm | 调用模型完成分类、抽取、总结、生成等任务 |
+| context | 调用 Context Manager 构造节点上下文 |
+| evaluation | 调用 Evaluation Layer 评估节点或子 Agent 输出 |
+| validator | 校验节点输出是否满足 Schema 和业务规则 |
+| human_gate | 暂停流程，等待用户确认或补充输入 |
+| branch | 根据条件进入不同分支 |
+| aggregate | 汇总多个节点结果 |
+
+### 4.4 Skill Registry
+
+Skill 是可复用的业务能力单元，通常由代码实现。
+
+Skill 适合承载：
+
+1. 领域规则。
+2. 文档解析逻辑。
+3. 结构化抽取。
+4. 风险评分。
+5. 业务分类。
+6. 专用 Prompt 模板。
+7. LLM 调用前后的校验逻辑。
+
+Skill 应当版本化，并提供清晰的输入输出 Schema。
+
+### 4.5 Tool Registry 与 Tool Gateway
+
+Tool Registry 是工具定义中心。Tool Gateway 是统一调用入口。
+
+设计目标：
+
+1. 主 Agent 和子 Agent 工具权限隔离。
+2. 工具参数强 Schema 校验。
+3. 工具调用前进行权限和风险校验。
+4. 工具调用后进行输出结构校验。
+5. 高风险工具强制 Human Gate。
+6. 所有工具调用可追踪、可审计、可回放。
+
+工具定义示例：
+
+```yaml
+tool:
+  id: crm.update_customer_status
+  version: 1.0.0
+  description: Update customer lifecycle status in CRM
+  input_schema: CrmUpdateCustomerStatusInput
+  output_schema: CrmUpdateCustomerStatusOutput
+  allowed_agents:
+    - sales_ops_agent
+  auth_scopes:
+    - crm:customer:write
+  risk_level: high
+  requires_user_confirmation: true
+  idempotency_required: true
+  timeout_ms: 5000
+  retry_policy:
+    max_retries: 1
+  audit:
+    log_input: true
+    log_output: true
+    mask_fields:
+      - phone
+      - email
+```
+
+### 4.6 Sub-agent Memory System
+
+每个子 Agent 都应拥有独立 Memory System，用来隔离不同业务能力域的上下文和经验。这样可以减少跨场景记忆污染，让固定流程的输出更稳定。
+
+子 Agent Memory 包含四类：
+
+| 子 Agent Memory 类型 | 生命周期 | 内容 | 用途 |
+|---|---|---|---|
+| Local Session Memory | 当前会话内 | 当前子任务输入、用户确认、局部上下文 | 支撑本次子 Agent 对话或调用 |
+| Local Working Memory | 单次子任务内 | Workflow state、节点结果、工具结果摘要 | 支撑固定工作流执行 |
+| Local Short-term Memory | 数小时到数天 | 近期同类任务摘要、失败重试经验 | 支持连续任务和短期优化 |
+| Local Long-term Memory | 长期 | 该子 Agent 专属领域经验、规则映射、稳定偏好 | 提升该能力域内的一致性 |
+
+子 Agent Memory 的访问原则：
+
+1. 默认隔离：子 Agent 只能直接访问自己的 Local Memory。
+2. 最小共享：子 Agent 只能向 Main Agent 返回任务所需的结构化结果，不直接暴露完整局部记忆。
+3. 受控提升：Local Memory 中有长期价值的信息，需要经过 Memory Promotion Policy 才能写入全局 Long-term Memory。
+4. 可审计同步：Local Memory 与 Global Memory 之间的读写、提升、删除都需要审计。
+5. Schema 约束：Local Memory 写入必须符合该子 Agent 的 Memory Schema。
+
+推荐结构：
+
+```json
+{
+  "agent_id": "contract_risk_agent",
+  "memory_scope": "local",
+  "memory_layers": {
+    "session": "contract_risk_agent.session",
+    "working": "contract_risk_agent.working",
+    "short_term": "contract_risk_agent.short_term",
+    "long_term": "contract_risk_agent.long_term"
+  },
+  "promotion_policy": {
+    "allow_promote_to_global": true,
+    "requires_validation": true,
+    "requires_user_confirmation": false,
+    "allowed_memory_types": [
+      "validated_business_fact",
+      "stable_user_preference",
+      "workflow_improvement_signal"
+    ]
+  }
+}
+```
+
+### 4.7 Evaluation Layer
+
+Evaluation Layer 负责评估 Agent 输出是否真实、正确、完整、一致、可执行和符合风险要求。它既服务于运行时质量闸门，也服务于离线回归评测。
+
+Evaluation Layer 的职责：
+
+1. 对子 Agent 节点输出进行局部评估。
+2. 对子 Agent 最终结果进行质量评估。
+3. 对主 Agent 汇总报告进行事实一致性和证据覆盖评估。
+4. 对写入类操作的操作预览进行风险评估。
+5. 对低分结果触发重试、补充检索、人工确认或失败返回。
+6. 将评估结果写入 Audit Log 和 Evaluation Store。
+
+Evaluation Layer 不应只依赖 LLM-as-judge。企业级场景应优先使用确定性校验、规则校验、工具复核和证据校验，LLM 评估只作为补充。
+
+评估类型：
+
+| 类型 | 目标 | 典型实现 |
+|---|---|---|
+| schema_evaluation | 输出结构是否正确 | JSON Schema / Pydantic |
+| rule_evaluation | 是否符合业务规则 | 规则引擎 / 代码规则 |
+| factuality_evaluation | 事实是否有证据支持 | claim extraction + evidence verification |
+| correctness_evaluation | 结论是否正确 | 工具复算 / 数据库复核 / 单元规则 |
+| completeness_evaluation | 是否遗漏关键项 | checklist / required fields / rubric |
+| consistency_evaluation | 多个子 Agent 输出是否冲突 | cross-agent comparison |
+| safety_evaluation | 是否包含越权、敏感、风险动作 | policy engine |
+| usefulness_evaluation | 建议是否可执行 | rubric / LLM judge |
+
+运行时质量闸门建议：
+
+```text
+Sub-agent node output
+  -> schema_evaluation
+  -> rule_evaluation
+  -> evidence_check
+  -> pass / retry / human_gate / fail
+
+Sub-agent final result
+  -> completeness_evaluation
+  -> factuality_evaluation
+  -> confidence_calibration
+  -> return to main agent
+
+Main agent final report
+  -> claim_verification
+  -> cross-agent_consistency
+  -> final_quality_score
+  -> return / revise / human_gate
+```
+
+## 5. Execution Loop 设计
+
+### 5.1 主 Agent 执行循环
+
+```mermaid
+flowchart TD
+    A["Receive User Request"] --> B["Load Session Context"]
+    B --> C["Build Initial Context Bundle"]
+    C --> D["Classify Scenario"]
+    D --> E["Check Missing Information"]
+    E --> F{"Need User Input?"}
+    F -- Yes --> G["Human Gate: Ask Clarification"]
+    G --> E
+    F -- No --> H["Generate Candidate Task Plan"]
+    H --> I["Validate, Freeze and Budget Task Plan"]
+    I --> J["Deterministic Dispatch Sub-tasks"]
+    J --> K["Collect Sub-agent Results"]
+    K --> L["Validate Result Schema"]
+    L --> M["Evaluate Sub-agent Results"]
+    M --> N["Build Aggregation Context"]
+    N --> O["Check Consistency and Confidence"]
+    O --> P{"Need Review or Retry?"}
+    P -- Yes --> Q["Retry / Alternative Agent / Human Gate"]
+    Q --> K
+    P -- No --> R["Aggregate Final Report"]
+    R --> S["Evaluate Final Report"]
+    S --> T["Write Memory and Audit Log"]
+    T --> U["Return Final Answer"]
+```
+
+### 5.2 子 Agent 执行循环
+
+```mermaid
+flowchart TD
+    A["Receive Sub-task"] --> B["Validate Input Schema"]
+    B --> C["Build Sub-agent Context Bundle"]
+    C --> D["Initialize Workflow State"]
+    D --> E["Build Node Context"]
+    E --> F["Execute Node"]
+    F --> G["Validate Node Output"]
+    G --> H["Evaluate Node Output"]
+    H --> I["Write Local Working Memory"]
+    I --> J{"More Nodes?"}
+    J -- Yes --> E
+    J -- No --> K["Validate Final Output Schema"]
+    K --> L["Evaluate Final Output"]
+    L --> M["Write Local Memory Summary"]
+    M --> N["Return Structured Result"]
+```
+
+### 5.3 Task Plan 示例
+
+```json
+{
+  "task_id": "task_001",
+  "scenario": "contract_review",
+  "user_goal": "Review this contract and provide risk recommendations",
+  "sub_tasks": [
+    {
+      "sub_task_id": "sub_001",
+      "agent_id": "document_parse_agent",
+      "depends_on": [],
+      "input": {
+        "document_id": "doc_001"
+      }
+    },
+    {
+      "sub_task_id": "sub_002",
+      "agent_id": "contract_risk_agent",
+      "depends_on": ["sub_001"],
+      "input_ref": {
+        "parsed_document": "sub_001.output"
+      }
+    },
+    {
+      "sub_task_id": "sub_003",
+      "agent_id": "report_agent",
+      "depends_on": ["sub_002"],
+      "input_ref": {
+        "risk_result": "sub_002.output"
+      }
+    }
+  ]
+}
+```
+
+## 6. Workflow 定义方式对比
+
+你问到“用代码定义是不是会比较稳定”。结论是：代码定义通常更稳定、更可测试、更适合关键流程；但纯代码会降低业务配置灵活性。企业级方案更推荐“混合定义”。
+
+### 6.1 方案一：纯代码定义 Workflow
+
+示例：
+
+```python
+class ContractReviewWorkflow(Workflow):
+    def build(self):
+        self.add_node(ValidateInputNode())
+        self.add_node(ParseDocumentSkill())
+        self.add_node(ExtractClauseSkill())
+        self.add_node(PolicyCompareSkill())
+        self.add_node(RiskAssessmentNode())
+        self.add_node(FinalValidatorNode())
+```
+
+优点：
+
+1. 类型约束更强。
+2. 更容易做单元测试和集成测试。
+3. IDE、静态检查、CI 可以直接介入。
+4. 复杂逻辑表达能力强。
+5. 对关键业务流程更稳定。
+6. 版本控制和代码评审流程成熟。
+
+缺点：
+
+1. 业务人员不容易直接修改。
+2. 每次流程变更通常需要发版。
+3. 多场景数量变多后，代码类容易膨胀。
+4. 动态调整流程成本较高。
+
+适用场景：
+
+1. 高风险流程。
+2. 写入类流程。
+3. 金融、法务、审批等强控制流程。
+4. 流程复杂且需要大量测试的场景。
+
+### 6.2 方案二：配置定义 Workflow
+
+示例：
+
+```yaml
+workflow:
+  id: contract_review
+  version: 1.0.0
+  nodes:
+    - id: validate_input
+      type: rule
+      handler: rules.validate_contract_input
+    - id: parse_document
+      type: skill
+      skill: document.parse
+    - id: extract_clauses
+      type: skill
+      skill: contract.extract_clauses
+    - id: assess_risk
+      type: llm
+      prompt_template: contract_risk_assessment_v3
+      output_schema: ContractRiskResult
+```
+
+优点：
+
+1. 流程调整更灵活。
+2. 适合多场景快速复制。
+3. 业务配置可以和代码解耦。
+4. 支持运行时加载不同场景包。
+5. 更容易构建可视化 Workflow Builder。
+
+缺点：
+
+1. 配置错误可能到运行时才暴露。
+2. 复杂逻辑表达能力弱。
+3. 类型检查能力不如代码。
+4. 调试体验通常更差。
+5. 如果缺少配置校验，稳定性会下降。
+
+适用场景：
+
+1. 流程变化频繁。
+2. 风险较低的只读分析流程。
+3. 多场景模板化复制。
+4. 需要业务管理员参与配置的场景。
+
+### 6.3 方案三：混合定义 Workflow
+
+推荐方案：Workflow 拓扑可以配置化，节点实现、Schema、规则、Skill 用代码定义。
+
+也就是：
+
+1. 流程顺序、节点组合、分支条件用 YAML/JSON 定义。
+2. 节点 handler、Skill、Tool adapter 用代码实现。
+3. 每个配置文件必须经过 Schema 校验。
+4. 每个 Workflow 版本必须绑定测试用例。
+5. 高风险场景只能使用经过批准的节点类型和工具。
+6. 分支条件必须使用受限 DSL 或结构化 AST，不能直接执行任意表达式字符串。
+7. Workflow 配置发布前必须经过 dry run、Golden Case 回归、审批和版本签名。
+
+示例：
+
+```yaml
+workflow:
+  id: sales_order_review
+  version: 1.0.0
+  input_schema: SalesOrderReviewInput
+  output_schema: SalesOrderReviewOutput
+  nodes:
+    - id: validate_input
+      type: rule
+      handler: sales.rules.validate_order_input
+    - id: query_customer
+      type: tool
+      tool: crm.get_customer_profile
+    - id: check_credit
+      type: skill
+      skill: finance.credit_check
+    - id: require_confirmation
+      type: human_gate
+      when:
+        op: equals
+        left: state.risk_level
+        right: high
+    - id: generate_report
+      type: skill
+      skill: report.generate_structured_summary
+```
+
+优点：
+
+1. 兼顾稳定性和灵活性。
+2. 关键逻辑仍在代码中，可测试、可审查。
+3. 场景拓展速度快。
+4. 可以逐步演进到可视化配置。
+5. 适合企业级平台化建设。
+
+缺点：
+
+1. 平台初期设计复杂度更高。
+2. 需要维护配置 Schema 和节点注册机制。
+3. 需要严格的版本管理和兼容性策略。
+
+推荐结论：
+
+在你的需求下，建议采用混合定义：
+
+1. 核心 Runtime、Skill、Tool Adapter、Policy、Validator 使用代码定义。
+2. Workflow 拓扑、Agent Profile、Tool 权限、Memory 策略使用配置定义。
+3. 高风险流程可限制为代码 Workflow，或要求配置变更必须经过审批和回归测试。
+
+### 6.4 Workflow 配置安全边界
+
+配置化 Workflow 不应等同于任意可执行脚本。为了避免配置注入、绕过审批或越权编排，应增加以下约束：
+
+1. Node 类型必须来自注册表，禁止配置文件声明新的执行类型。
+2. Handler、Skill、Tool 只能引用已注册且当前版本可用的实现。
+3. `when`、`activation_condition`、路由条件等必须使用受限 DSL，不允许 `eval`、动态 import 或任意代码执行。
+4. 高风险节点必须显式声明 risk_level、required_gate 和 rollback / compensation 策略。
+5. 发布前执行 workflow lint、schema validation、权限校验、dry run 和 Golden Case 回归。
+6. 生产环境只加载已签名、已审批、版本固定的 Workflow。
+7. Workflow Runtime 应记录节点执行 trace，用于评估、审计和回放。
+
+## 7. 多场景适配方式
+
+### 7.1 Scenario Pack
+
+每个业务场景以 Scenario Pack 的形式接入。
+
+Scenario Pack 中的子 Agent 数量可以自定义。系统不预设固定数量，而是通过 `scenario.yaml` 或 Agent Registry 声明该场景可用的子 Agent 列表、必选关系、并发策略和路由条件。
+
+`scenario.yaml` 示例：
+
+```yaml
+scenario:
+  id: contract_review
+  version: 1.0.0
+  agent_registry:
+    min_agents: 1
+    max_agents: 20
+    default_agents:
+      - document_parse_agent
+      - contract_risk_agent
+      - report_agent
+    optional_agents:
+      - finance_terms_agent
+      - privacy_review_agent
+      - negotiation_strategy_agent
+    disabled_agents:
+      - legacy_clause_agent
+  routing:
+    strategy: capability_based
+    allow_parallel_agents: true
+    max_parallel_agents: 4
+  selection_policy:
+    require_schema_match: true
+    require_role_match: true
+    require_tool_permission_match: true
+    require_context_policy_match: true
+```
+
+角色定义示例：
+
+```yaml
+role:
+  id: risk_reviewer
+  name: Risk Reviewer
+  description: Identify business risks and produce evidence-backed risk judgments.
+  goals:
+    - Detect risks from provided evidence.
+    - Assign risk level according to policy.
+    - Provide actionable recommendations.
+  boundaries:
+    - Do not execute write actions.
+    - Do not invent facts without evidence.
+    - Do not override enterprise policy.
+  allowed_task_types:
+    - risk_assessment
+    - policy_comparison
+  output_requirements:
+    require_evidence: true
+    require_confidence: true
+    require_limitations: true
+  default_policies:
+    context_policy: risk_reviewer_context_v1
+    evaluation_policy: risk_reviewer_eval_v1
+    human_gate_policy: medium_risk_confirmation_v1
+```
+
+子 Agent 注册示例：
+
+```yaml
+agent:
+  id: finance_terms_agent
+  role_id: risk_reviewer
+  enabled: true
+  required: false
+  capabilities:
+    - payment_term_review
+    - credit_risk_hint
+  input_schema: FinanceTermsInput
+  output_schema: FinanceTermsOutput
+  workflow_id: finance_terms_review_v1
+  priority: 50
+  max_concurrency: 2
+```
+
+目录示例：
+
+```text
+scenario_packs/
+  contract_review/
+    scenario.yaml
+    roles/
+      risk_reviewer.yaml
+      report_writer.yaml
+    agents/
+      document_parse_agent.yaml
+      contract_risk_agent.yaml
+    context_policies/
+      contract_risk_agent_context.yaml
+    evaluation_policies/
+      contract_risk_agent_eval.yaml
+    memory_policies/
+      document_parse_agent_memory.yaml
+      contract_risk_agent_memory.yaml
+    workflows/
+      contract_review_v1.yaml
+    skills/
+      clause_extraction.py
+      risk_scoring.py
+    schemas/
+      input.py
+      output.py
+    evals/
+      golden_cases.yaml
+
+  sales_ops/
+    scenario.yaml
+    roles/
+    agents/
+    context_policies/
+    evaluation_policies/
+    memory_policies/
+    workflows/
+    skills/
+    schemas/
+    evals/
+```
+
+### 7.2 场景路由
+
+Main Agent 可以通过以下方式识别场景：
+
+1. 用户显式指定。
+2. API 调用参数指定。
+3. 根据输入对象类型判断，例如合同、客户、订单、工单。
+4. 使用轻量 LLM 分类器判断。
+5. 使用规则优先，LLM 兜底。
+
+场景路由结果必须包含置信度：
+
+```json
+{
+  "scenario": "contract_review",
+  "confidence": 0.92,
+  "reason": "The request contains a contract document and asks for risk review."
+}
+```
+
+若置信度不足，应触发用户确认。
+
+### 7.3 子 Agent 选择策略
+
+子 Agent 选择应基于能力和约束，而不是固定数量。
+
+选择输入：
+
+1. Task Plan 中的子任务类型。
+2. Agent Registry 中声明的 capabilities。
+3. Role Registry 中声明的 role_id、allowed_task_types 和 boundaries。
+4. 子 Agent 的 input_schema / output_schema。
+5. Tool Policy 是否满足任务需要。
+6. Memory / Context / Evaluation Policy 是否满足风险要求。
+7. 当前启用状态、版本、并发限制和灰度策略。
+
+选择结果示例：
+
+```json
+{
+  "task_id": "task_001",
+  "selected_agents": [
+    {
+      "agent_id": "document_parse_agent",
+      "role_id": "researcher",
+      "reason": "Required for document text extraction.",
+      "execution_mode": "sequential"
+    },
+    {
+      "agent_id": "contract_risk_agent",
+      "role_id": "risk_reviewer",
+      "reason": "Required for contract risk assessment.",
+      "execution_mode": "sequential"
+    },
+    {
+      "agent_id": "privacy_review_agent",
+      "role_id": "risk_reviewer",
+      "reason": "Selected because contract includes personal data clauses.",
+      "execution_mode": "parallel"
+    }
+  ],
+  "skipped_agents": [
+    {
+      "agent_id": "finance_terms_agent",
+      "reason": "No finance or payment-risk clause detected."
+    }
+  ]
+}
+```
+
+调度约束：
+
+1. 主 Agent 不能调用未注册子 Agent。
+2. 子 Agent 数量可以随场景变化，但必须受 `max_agents`、并发上限和权限策略约束。
+3. 主 Agent 不能让子 Agent 执行超出其 Role Profile 边界的任务。
+4. 高风险角色必须绑定 Evaluation Policy 和 Human Gate Policy。
+5. 可选子 Agent 的输出不能覆盖必选子 Agent 的证据结论，只能补充或触发冲突处理。
+
+## 8. Tool Registry 设计
+
+### 8.1 工具权限模型
+
+每个 Agent 有独立的工具白名单。
+
+```yaml
+agent_tool_policy:
+  agent_id: sales_ops_agent
+  allowed_tools:
+    - crm.get_customer_profile
+    - crm.update_customer_status
+    - order.get_order_detail
+  denied_tools:
+    - payment.create_transfer
+```
+
+### 8.2 工具风险等级
+
+| 风险等级 | 示例 | 策略 |
+|---|---|---|
+| low | 查询公开知识库 | 可自动执行 |
+| medium | 查询客户资料、内部文档 | 需要权限校验和审计 |
+| high | 修改 CRM、发送邮件、提交审批 | 需要用户确认 |
+| critical | 付款、删除数据、正式法律提交 | 需要多级确认或外部审批 |
+
+### 8.3 写入类工具要求
+
+写入类工具必须满足：
+
+1. 支持 idempotency_key。
+2. 调用前生成用户可读的操作预览。
+3. 调用前通过 Human Gate。
+4. 调用后记录结果。
+5. 失败时有明确补偿或恢复策略。
+
+写入类工具调用请求示例：
+
+```json
+{
+  "tool_id": "crm.update_customer_status",
+  "risk_level": "high",
+  "requires_user_confirmation": true,
+  "idempotency_key": "task_001_sub_003_update_customer_status",
+  "preview": {
+    "customer_id": "cus_001",
+    "old_status": "lead",
+    "new_status": "qualified"
+  }
+}
+```
+
+### 8.4 企业权限与执行边界
+
+Tool Gateway 应作为真实安全边界，而不是简单的函数代理。尤其是写入类、外部系统类和敏感数据查询类工具，需要明确身份、授权和执行责任。
+
+建议补充以下机制：
+
+1. 区分用户委托权限和服务账号权限。默认优先使用用户委托权限，服务账号只用于明确授权的后台任务。
+2. Tool Credential 与 Agent Runtime 隔离存储，Agent 只能通过 Tool Gateway 触发调用，不能直接读取 token、secret 或连接串。
+3. 每次工具调用都绑定 actor、subject、tenant、scope、purpose、task_id 和 workflow_run_id。
+4. 写入类工具使用 prepare / preview / approve / commit 四阶段流程。
+5. Human approval 与实际 executor 分权。用户批准操作意图，Tool Gateway 在 commit 前再次校验权限、参数、幂等和风险。
+6. idempotency_key 应写入独立的幂等记录表，记录请求 hash、目标资源、状态、结果和过期时间。
+7. retry 只允许用于幂等或明确可重入工具，非幂等写入必须进入人工处理或补偿流程。
+8. 高风险和 critical 工具需要支持 rollback、compensation 或人工恢复说明。
+9. Tool 输出进入 Context Manager 前必须做字段级脱敏、结构化归一和 source_ref 标注。
+10. Tool Gateway 应支持 deny-by-default，未注册、未授权、未绑定场景的工具全部拒绝执行。
+
+## 9. Memory 设计
+
+### 9.1 Memory 分层
+
+Memory 分为 Global Memory 和 Sub-agent Local Memory 两个层级。
+
+Global Memory 面向主 Agent 和跨 Agent 协作，保存任务级、用户级、组织级和企业级信息。
+
+| Global Memory 类型 | 生命周期 | 主要内容 | 存储建议 |
+|---|---|---|---|
+| Global Session Memory | 当前会话 | 用户当前请求、对话上下文、已确认事项 | Redis / In-memory / DB |
+| Global Working Memory | 单次任务 | Task Plan、子任务状态、跨 Agent 中间结果 | DB / Workflow State Store |
+| Global Short-term Memory | 数小时到数天 | 近期任务、未完成事项、短期偏好 | PostgreSQL |
+| Global Long-term Memory | 长期 | 企业规则、历史案例、用户偏好、业务知识 | PostgreSQL + Vector DB |
+| Global Core Memory Snapshot | 版本化快照 | 高价值、低风险、常用的用户/组织/场景摘要 | PostgreSQL JSONB / Object Storage |
+
+Sub-agent Local Memory 面向单个子 Agent，保存该子 Agent 能力域内的局部上下文和经验。
+
+| Local Memory 类型 | 生命周期 | 主要内容 | 存储建议 |
+|---|---|---|---|
+| Local Session Memory | 当前会话 | 当前子 Agent 的会话上下文、局部确认事项 | Redis / In-memory / DB |
+| Local Working Memory | 单次子任务 | Workflow 节点状态、局部中间结果、工具结果摘要 | Workflow State Store |
+| Local Short-term Memory | 数小时到数天 | 近期同类子任务摘要、局部失败和修正记录 | PostgreSQL |
+| Local Long-term Memory | 长期 | 子 Agent 专属领域经验、稳定偏好、规则映射 | PostgreSQL + Vector DB |
+| Local Core Memory Snapshot | 版本化快照 | 子 Agent 高频使用、已验证的局部经验摘要 | PostgreSQL JSONB / Object Storage |
+
+### 9.2 子 Agent 独立 Memory 方案
+
+每个子 Agent 拥有独立 Memory Namespace。
+
+命名建议：
+
+```text
+memory://{tenant_id}/{scenario_id}/{agent_id}/{memory_layer}/{memory_type}
+```
+
+示例：
+
+```text
+memory://default/contract_review/contract_risk_agent/local_long_term/risk_rule_mapping
+```
+
+子 Agent Memory 由三部分组成：
+
+1. Local Memory Store：保存该子 Agent 的局部记忆。
+2. Local Memory Policy：定义该子 Agent 可读写的记忆类型。
+3. Memory Promotion Policy：定义哪些局部记忆可以提升到 Global Memory。
+
+子 Agent Memory 写入对象示例：
+
+```json
+{
+  "memory_id": "mem_contract_risk_001",
+  "agent_id": "contract_risk_agent",
+  "scope": "local",
+  "layer": "long_term",
+  "memory_type": "risk_rule_mapping",
+  "content": {
+    "risk_pattern": "payment_period_exceeds_policy",
+    "matched_policy": "standard_payment_period_30_days",
+    "recommended_action": "Suggest changing payment period to within 30 days."
+  },
+  "source": {
+    "task_id": "task_001",
+    "workflow_id": "contract_risk_review_v1",
+    "evidence": "Validated by policy.search tool"
+  },
+  "confidence": 0.94,
+  "promotion_status": "local_only",
+  "created_at": "2026-05-21T10:00:00+08:00"
+}
+```
+
+子 Agent Memory 读取流程：
+
+1. Workflow Engine 初始化子任务。
+2. 子 Agent 根据 Agent Profile 读取自己的 Local Session Memory 和 Local Working Memory。
+3. 根据当前 Workflow 节点读取必要的 Local Short-term / Long-term Memory。
+4. 若需要全局规则或跨 Agent 信息，通过 Memory Manager 读取 Global Memory。
+5. Memory Manager 根据权限、场景、任务目的和数据分级返回候选记忆，Context Manager 再决定是否进入最终 Context Bundle。
+
+子 Agent Memory 写入流程：
+
+1. Workflow 节点产生局部结果。
+2. Validator 判断该结果是否可以写入 Local Memory。
+3. Local Memory Policy 判断写入层级和过期时间。
+4. 敏感字段脱敏后写入 Local Memory。
+5. 若该记忆具备跨任务价值，进入 Promotion Candidate 队列。
+6. Memory Promotion Policy 判断是否可提升到 Global Memory。
+7. 必要时触发用户确认或管理员审核。
+
+子 Agent Memory 与 Global Memory 的关系：
+
+| 关系 | 说明 |
+|---|---|
+| Local to Global | 子 Agent 产生的高价值、已验证事实可以提升为全局记忆 |
+| Global to Local | 企业规则、用户偏好、场景上下文可以按权限注入子 Agent |
+| Local to Local | 子 Agent 之间默认不直接共享，需要通过 Main Agent 或 Memory Manager |
+| Local Isolation | 子 Agent 的局部推理、中间结果、失败记录默认不进入全局记忆 |
+
+### 9.3 Memory 读取策略
+
+不是所有 Memory 都应该自动注入上下文。建议使用 Memory Policy 决定读取范围。
+
+读取顺序：
+
+1. 读取当前 Global Session Memory。
+2. 读取当前 Global Working Memory。
+3. 子 Agent 读取自己的 Local Session Memory 和 Local Working Memory。
+4. 根据场景和 Agent Profile 读取 Local Short-term / Long-term Memory。
+5. 根据权限和相关性检索 Global Short-term / Long-term Memory。
+6. 将候选记忆交给 Context Manager，由 Context Manager 构造最终 Context Bundle。
+
+Memory Retrieval Candidate 示例：
+
+```json
+{
+  "session_facts": [],
+  "confirmed_constraints": [],
+  "agent_local_memory": [],
+  "recent_related_tasks": [],
+  "enterprise_rules": [],
+  "retrieved_knowledge": []
+}
+```
+
+### 9.4 Memory 写入策略
+
+长期记忆不应由模型自由写入。
+
+允许写入的内容：
+
+1. 用户明确确认的偏好。
+2. 已验证的业务事实。
+3. 流程执行产生的结构化结果。
+4. 来自授权来源的企业规则。
+5. 子 Agent 经 Validator 校验后的局部经验。
+
+不建议写入：
+
+1. 模型的临时推理过程。
+2. 未经验证的猜测。
+3. 一次性敏感信息。
+4. 工具返回中的敏感字段原文。
+5. 子 Agent 未经确认的局部推断。
+
+子 Agent 写入规则：
+
+1. Local Working Memory 可以记录节点状态和中间结果。
+2. Local Short-term Memory 可以记录近期任务摘要和失败修正信息。
+3. Local Long-term Memory 只能写入经过校验的稳定模式、领域映射或用户明确偏好。
+4. Global Long-term Memory 只能由 Main Agent 或 Memory Manager 通过 Promotion Policy 写入。
+5. 任何从 Local Memory 提升到 Global Memory 的动作都必须记录来源、证据和置信度。
+
+### 9.4.1 Memory 分阶段启用策略
+
+Memory 能力应分阶段启用，避免早期系统因为自动长期记忆带来污染、过期、泄漏和冲突问题。
+
+Phase 1 建议：
+
+1. 只启用 Global Session Memory、Global Working Memory、Local Session Memory 和 Local Working Memory。
+2. Long-term Memory 只读或完全关闭，不允许 Agent 自动写入。
+3. 子 Agent 只能写本次 Workflow state、节点结果摘要、工具结果摘要和用户确认事项。
+4. 任务完成后只生成 Episode 摘要候选，不自动进入长期记忆。
+5. Memory 写入失败不应影响主流程返回，但必须记录可观测事件。
+
+Phase 2 再启用：
+
+1. Local Short-term Memory。
+2. 只读 Global Long-term Memory。
+3. Memory Candidate Pipeline。
+4. 人工或规则审批后的 Local Long-term Memory 写入。
+5. 小规模 Episode Search。
+
+Phase 3 再启用：
+
+1. Global Long-term Memory 写入。
+2. Core Memory Snapshot 自动刷新。
+3. Memory Consolidation。
+4. 跨场景经验迁移。
+5. 可视化 Memory 治理面板。
+
+### 9.4.2 Memory 生命周期与冲突治理
+
+所有长期或准长期 Memory 都需要生命周期治理。建议在 Memory Schema 中补充：
+
+1. `expires_at`：过期时间。
+2. `staleness_policy`：过期、数据源更新或规则版本变化后的处理策略。
+3. `delete_policy`：用户删除、合规删除和管理员删除策略。
+4. `retention_policy`：不同数据等级的保留期。
+5. `pii_policy`：PII 字段脱敏、加密、禁止写入或引用方式。
+6. `conflict_set`：与其他 Memory 冲突时的分组和优先级。
+7. `source_authority`：来源权威等级，例如用户确认、企业系统、模型推断、人工审核。
+8. `last_verified_at`：最近一次验证时间。
+
+当 Memory 与当前工具证据、企业规则或用户确认冲突时，应以当前工具证据、企业规则和用户确认优先，Memory 只能作为辅助信号。
+
+### 9.5 Hermes-inspired Memory 适配方案
+
+Hermes Agent 的 Memory 思路适合借鉴，但不应原样用于企业级 Agent。适合吸收的是“小容量高价值常驻记忆、Session Search、Skills as procedural memory、按需加载”的思想；需要改造的是自由 Markdown 记忆、Agent 自主写长期记忆和全局历史检索。
+
+本方案采用 Hermes-inspired、Enterprise-hardened 的 Memory 设计。
+
+| Hermes 思路 | 企业级改造 |
+|---|---|
+| `MEMORY.md` 小容量常驻记忆 | Core Memory Snapshot，结构化、版本化、可审计 |
+| `USER.md` 用户画像 | User / Role / Org Profile Memory，区分个人、角色、部门和组织 |
+| Session Search | Episode Store，支持 FTS + Vector Search，但必须经过权限和脱敏 |
+| Skills 作为过程记忆 | Versioned Skill Registry，Skill 变更需测试、审批和回滚 |
+| Agent 自己整理记忆 | Memory Candidate Pipeline，候选记忆经 Evaluation Gate 后写入 |
+| Session 开始注入 frozen snapshot | Context Manager 按 Context Policy 注入受控 Core Snapshot |
+
+#### 9.5.1 Core Memory Snapshot
+
+Core Memory Snapshot 是受控版的“常驻小记忆”。它只保存高价值、低风险、稳定、常用的信息摘要，不保存原始敏感数据。
+
+Core Memory Snapshot 分为三类：
+
+| 类型 | 内容 | 注入策略 |
+|---|---|---|
+| User Core Snapshot | 用户稳定偏好、沟通方式、常用约束 | 仅在与该用户相关任务中注入 |
+| Org Core Snapshot | 企业级常用规则、组织约束、通用流程原则 | 按权限和场景注入 |
+| Agent Core Snapshot | 子 Agent 高频使用的局部经验和规则映射 | 仅注入对应子 Agent |
+
+约束：
+
+1. Snapshot 必须有版本号。
+2. Snapshot 必须有来源和更新时间。
+3. Snapshot 必须设置最大 token / 字符预算。
+4. Snapshot 不直接由 LLM 自由改写。
+5. Snapshot 更新必须来自 Memory Candidate Pipeline。
+
+示例：
+
+```json
+{
+  "snapshot_id": "core_contract_risk_agent_v3",
+  "scope": "agent",
+  "agent_id": "contract_risk_agent",
+  "version": "3",
+  "budget_tokens": 800,
+  "items": [
+    {
+      "type": "stable_rule_mapping",
+      "content": "Payment period longer than standard policy should be flagged as payment_term_risk.",
+      "source": "validated_memory:mem_contract_risk_001",
+      "confidence": 0.95
+    }
+  ],
+  "created_at": "2026-05-21T10:00:00+08:00"
+}
+```
+
+#### 9.5.2 Episode Store
+
+Episode Store 是受控版 Session Search，用来检索历史任务、历史对话、失败修正和相似案例。
+
+Episode Store 不应直接向 Agent 暴露原始历史，而应通过 Context Manager 进行：
+
+1. 权限过滤。
+2. 敏感字段脱敏。
+3. 相关性排序。
+4. 证据来源标注。
+5. token 预算裁剪。
+6. Context Snapshot 记录。
+
+Episode 可以包括：
+
+1. 历史任务摘要。
+2. 子 Agent 执行摘要。
+3. 失败和修正记录。
+4. 用户确认过的决策。
+5. 工具调用结果摘要。
+6. 最终 Evaluation Result。
+
+#### 9.5.3 Skills as Procedural Memory
+
+Hermes 将 Skills 作为过程记忆的做法非常适合本方案。固定流程中可复用的经验不应全部写入 Memory，而应沉淀为 Skill。
+
+适合沉淀为 Skill：
+
+1. 稳定的业务流程。
+2. 复杂但可复用的判断逻辑。
+3. 领域特定抽取方法。
+4. 固定报告结构。
+5. 风险评分算法。
+
+不适合沉淀为普通 Memory：
+
+1. 可执行流程。
+2. 需要测试的业务逻辑。
+3. 影响写入类工具调用的规则。
+4. 跨场景复用的专业能力。
+
+Skill 变更要求：
+
+1. 版本化。
+2. 单元测试。
+3. Golden Case 回归。
+4. 审批后生效。
+5. 支持回滚。
+
+#### 9.5.4 Memory Candidate Pipeline
+
+所有由 Agent 产生的长期记忆都先进入 Memory Candidate Pipeline。
+
+```mermaid
+flowchart TD
+    A["Runtime Observation"] --> B["Memory Candidate"]
+    B --> C["Schema Validation"]
+    C --> D["Evidence Check"]
+    D --> E["Evaluation Gate"]
+    E --> F{"Write Target?"}
+    F -- Local --> G["Local Long-term Memory"]
+    F -- Global --> H["Promotion Policy"]
+    H --> I{"Need Approval?"}
+    I -- Yes --> J["Human / Admin Approval"]
+    I -- No --> K["Global Long-term Memory"]
+    J --> K
+    G --> L["Core Snapshot Refresh Candidate"]
+    K --> L
+```
+
+Memory Candidate 示例：
+
+```json
+{
+  "candidate_id": "mem_candidate_001",
+  "created_by": "contract_risk_agent",
+  "candidate_type": "stable_rule_mapping",
+  "proposed_scope": "local",
+  "content": {
+    "pattern": "payment_period_exceeds_policy",
+    "action": "flag_as_medium_risk"
+  },
+  "evidence": [
+    {
+      "source_ref": "eval_001",
+      "type": "evaluation_result"
+    }
+  ],
+  "evaluation_required": [
+    "factuality_evaluation",
+    "correctness_evaluation",
+    "staleness_check"
+  ],
+  "status": "pending_evaluation"
+}
+```
+
+#### 9.5.5 Memory Consolidation
+
+当 Local Memory 或 Global Memory 增长到一定规模时，需要做 consolidation。
+
+Consolidation 目标：
+
+1. 合并重复记忆。
+2. 删除过期或低置信度记忆。
+3. 将稳定经验压缩为 Core Memory Snapshot。
+4. 将流程性经验迁移为 Skill Candidate。
+5. 保留证据链和版本历史。
+
+Consolidation 不应由模型单独决定，必须经过 Evaluation Layer 和 Memory Policy。
+
+#### 9.5.6 适配结论
+
+适合直接吸收：
+
+1. 小容量高价值常驻记忆。
+2. Session / Episode Search。
+3. Skills as procedural memory。
+4. 按需加载，避免全量上下文注入。
+
+必须企业级硬化：
+
+1. Markdown 记忆改为结构化 Memory Record。
+2. Agent 自主写入改为 Candidate -> Evaluation -> Policy -> Write。
+3. 全局检索改为 Context Manager 受控检索。
+4. Skill 修改必须版本化、测试和审批。
+5. Core Snapshot 必须有预算、来源、版本和审计。
+
+### 9.6 预留多租户字段
+
+虽然当前暂不需要多租户，但所有关键表建议预留以下字段：
+
+```text
+tenant_id
+org_id
+department_id
+user_id
+access_scope
+data_classification
+```
+
+## 10. Context Manager 设计
+
+Context Manager 是 Agent 平台里的上下文编译层。它不负责长期存储，也不负责直接执行业务动作，而是负责在每次规划、路由、Workflow 节点执行、结果汇总之前，构造一份稳定、受控、可追踪的 Context Bundle。
+
+如果 Memory Manager 回答“系统记住了什么”，Context Manager 回答“当前这一步应该使用哪些上下文”。
+
+### 10.1 设计目标
+
+Context Manager 的目标：
+
+1. 控制上下文范围，避免把无关信息塞给模型。
+2. 控制上下文预算，避免超过模型窗口或稀释关键证据。
+3. 控制上下文权限，避免子 Agent 读取不该读取的信息。
+4. 控制上下文来源，保证每条上下文都有 provenance。
+5. 控制上下文优先级，让企业规则、用户确认、工具证据优先于普通历史记忆。
+6. 控制上下文形态，把原始材料压缩成节点可用的结构化输入。
+7. 支持上下文快照，让关键任务可以回放和审计。
+
+### 10.2 Context 来源
+
+Context Manager 可以从以下来源构造上下文：
+
+| 来源 | 示例 | 使用策略 |
+|---|---|---|
+| User Input | 当前用户请求、补充说明、确认结果 | 高优先级 |
+| Global Memory | 企业规则、用户偏好、近期任务 | 按权限和相关性读取 |
+| Sub-agent Local Memory | 子 Agent 专属经验、局部任务摘要 | 只给所属子 Agent 默认读取 |
+| Core Memory Snapshot | 用户、组织或子 Agent 的高价值常驻摘要 | 按预算注入，必须有版本和来源 |
+| Episode Store | 历史任务、失败修正、相似案例 | 检索后脱敏、排序、裁剪 |
+| Workflow State | 当前节点状态、前置节点输出 | 高优先级 |
+| Tool Result | CRM 查询结果、文档解析结果、数据库返回 | 必须带来源和时间 |
+| Retrieved Knowledge | RAG 检索结果、知识库片段 | 必须带引用和置信度 |
+| System Policy | 安全规则、工具调用限制、输出格式要求 | 最高优先级 |
+
+### 10.3 Context Bundle
+
+Context Manager 的输出不应是一段拼接文本，而应是结构化 Context Bundle。
+
+示例：
+
+```json
+{
+  "context_bundle_id": "ctx_001",
+  "task_id": "task_001",
+  "agent_id": "contract_risk_agent",
+  "workflow_node_id": "risk_assessment",
+  "purpose": "Assess payment-related contract risk",
+  "budget": {
+    "max_tokens": 6000,
+    "used_tokens": 4200
+  },
+  "priority_order": [
+    "system_policy",
+    "user_confirmed_constraints",
+    "workflow_state",
+    "tool_evidence",
+    "enterprise_rules",
+    "agent_local_memory",
+    "retrieved_knowledge"
+  ],
+  "items": [
+    {
+      "type": "tool_evidence",
+      "content": "Clause 4.2 states payment period is 90 days.",
+      "source": "document_parser",
+      "source_ref": "doc_001#page=5#clause=4.2",
+      "confidence": 1.0
+    },
+    {
+      "type": "enterprise_rule",
+      "content": "Standard payment period should not exceed 30 days.",
+      "source": "policy.search",
+      "source_ref": "finance_policy_v3#payment_terms",
+      "confidence": 1.0
+    }
+  ],
+  "redactions": [
+    {
+      "field": "customer.email",
+      "reason": "not required for this node"
+    }
+  ]
+}
+```
+
+### 10.4 Context 构造流程
+
+```mermaid
+flowchart TD
+    A["Receive Context Request"] --> B["Identify Purpose and Node"]
+    B --> C["Load Context Policy"]
+    C --> D["Collect Candidate Context"]
+    D --> E["Apply Permission Filter"]
+    E --> F["Rank by Relevance and Priority"]
+    F --> G["Deduplicate and Resolve Conflicts"]
+    G --> H["Compress or Summarize"]
+    H --> I["Apply Token Budget"]
+    I --> J["Attach Provenance"]
+    J --> K["Create Context Snapshot"]
+    K --> L["Return Context Bundle"]
+```
+
+### 10.5 Context Policy
+
+每个主 Agent、子 Agent 和 Workflow Node 都可以定义 Context Policy。
+
+示例：
+
+```yaml
+context_policy:
+  agent_id: contract_risk_agent
+  default_budget_tokens: 6000
+  allowed_sources:
+    - user_input
+    - workflow_state
+    - tool_evidence
+    - global.long_term.enterprise_rules
+    - local.long_term.risk_rule_mapping
+  denied_sources:
+    - other_agents.local_memory
+    - raw_sensitive_fields
+  priority_order:
+    - system_policy
+    - user_confirmed_constraints
+    - tool_evidence
+    - enterprise_rules
+    - local_memory
+    - retrieved_knowledge
+  compression:
+    strategy: structured_summary
+    preserve_evidence: true
+    preserve_user_confirmations: true
+  snapshot:
+    enabled: true
+    audit_level: full
+```
+
+节点级 Context Policy 示例：
+
+```yaml
+node_context_policy:
+  workflow_id: contract_risk_review_v1
+  node_id: risk_assessment
+  max_tokens: 5000
+  must_include:
+    - user_confirmed_constraints
+    - parsed_contract_clauses
+    - matched_enterprise_policies
+  may_include:
+    - local.long_term.risk_rule_mapping
+    - retrieved_similar_cases
+  exclude:
+    - raw_customer_contact
+    - unrelated_conversation_history
+```
+
+### 10.6 Context 优先级建议
+
+企业级固定流程里，上下文优先级建议固定：
+
+1. System Policy：系统规则、权限、输出格式、安全要求。
+2. User Confirmed Constraints：用户明确确认的限制和选择。
+3. Current Task Input：当前任务输入。
+4. Workflow State：当前流程状态和前置节点输出。
+5. Tool Evidence：工具返回的事实证据。
+6. Enterprise Rules：企业政策、业务规则、审批规则。
+7. Sub-agent Local Memory：该子 Agent 的局部经验。
+8. Core Memory Snapshot：高价值、低风险、常用摘要。
+9. Global Long-term Memory：长期知识和历史案例。
+10. Episode Store：历史任务和相似案例。
+11. Retrieved Knowledge：外部或知识库检索片段。
+12. Conversation History：普通对话历史。
+
+这个顺序可以减少“历史对话覆盖当前任务”“相似案例覆盖企业规则”的问题。
+
+### 10.7 Context 压缩策略
+
+Context Manager 应支持多种压缩策略：
+
+| 策略 | 适用场景 |
+|---|---|
+| extractive_selection | 从原文中选取关键证据，适合合同、政策、审计 |
+| structured_summary | 转成字段化摘要，适合 Workflow 节点输入 |
+| hierarchical_summary | 多文档或长任务逐层摘要 |
+| evidence_first | 保留证据、删减背景，适合高精度判断 |
+| recency_weighted | 最近任务优先，适合连续业务流程 |
+| rule_first | 企业规则优先，适合审批、财务、法务 |
+
+高风险流程建议使用 `evidence_first` 或 `rule_first`，不要只用自由摘要。
+
+### 10.8 Context 快照与回放
+
+每次关键 LLM 调用、Tool 调用、Human Gate、最终汇总前，都应保存 Context Snapshot。
+
+Context Snapshot 应包含：
+
+1. Context Bundle ID。
+2. Context Policy 版本。
+3. 输入来源列表。
+4. 被过滤掉的敏感字段摘要。
+5. 压缩策略。
+6. Token 预算。
+7. 最终传入模型或节点的上下文。
+8. 关联的输出结果。
+
+这样可以支持：
+
+1. 结果回放。
+2. 错误定位。
+3. 合规审计。
+4. Golden Case 回归测试。
+5. 模型升级前后对比。
+
+Context Snapshot 本身也可能成为敏感数据集中点，因此必须补充数据保护策略：
+
+1. 快照入库前完成脱敏、最小化和分级标记，不能只在展示层脱敏。
+2. 对 raw prompt、raw tool result、原始文档片段设置单独保留期。
+3. 高敏场景可以只保存 hash、source_ref、字段级摘要和可重取证据位置。
+4. 快照存储需要加密，访问需要 RBAC / ABAC 校验。
+5. 每次快照读取也要写入 Audit Log。
+6. 快照应支持按 task、user、tenant、data_classification 执行删除或冻结。
+7. 回放环境应默认使用脱敏快照，只有合规授权后才能读取原始证据。
+
+### 10.9 Context Manager 与其他模块关系
+
+| 模块 | 关系 |
+|---|---|
+| Main Agent | 请求任务级、规划级、汇总级 Context Bundle |
+| Sub Agent | 请求子任务级和节点级 Context Bundle |
+| Memory Manager | 提供候选记忆，最终是否进入上下文由 Context Manager 决定 |
+| Tool Gateway | 工具结果进入上下文前需要脱敏、归一化和证据标注 |
+| Workflow Engine | 每个节点执行前请求节点上下文 |
+| Evaluation Layer | 使用 Context Bundle 和 Context Snapshot 评估 groundedness 与证据覆盖 |
+| Human Gate | 用户确认结果写入高优先级上下文 |
+| Audit Log | 记录 Context Snapshot 和上下文来源 |
+
+推荐边界：
+
+1. Memory Manager 只负责存取、检索和权限初筛。
+2. Context Manager 负责选择、排序、压缩、预算和快照。
+3. Workflow Engine 不直接拼 Prompt，只消费 Context Bundle。
+4. Skill 和 LLM Node 不直接访问全部 Memory，只读取 Context Manager 提供的上下文。
+
+## 11. Evaluation Layer 设计
+
+Evaluation Layer 是 Agent 平台的质量控制层，负责对输出结果进行结构化评估。它不是离线测试的别名，而是同时覆盖运行时质量闸门和离线回归评测。
+
+核心目标：
+
+1. 评估输出是否真实，有没有证据支持。
+2. 评估输出是否正确，是否符合数据、规则和业务逻辑。
+3. 评估输出是否完整，是否遗漏关键字段或关键结论。
+4. 评估输出是否一致，多个子 Agent 或多个证据之间是否冲突。
+5. 评估输出是否安全，是否包含越权、敏感或高风险动作。
+6. 评估输出是否可执行，建议是否明确、具体、符合业务流程。
+7. 对低质量输出触发重试、补充上下文、人工确认或失败返回。
+
+### 11.1 评估层位置
+
+```mermaid
+flowchart TD
+    A["Sub-agent Output"] --> B["Schema Evaluation"]
+    B --> C["Rule Evaluation"]
+    C --> D["Factuality Evaluation"]
+    D --> E["Correctness Evaluation"]
+    E --> F["Completeness Evaluation"]
+    F --> G["Consistency Evaluation"]
+    G --> H["Safety Evaluation"]
+    H --> I{"Pass Quality Gate?"}
+    I -- Yes --> J["Return to Main Agent / User"]
+    I -- No --> K["Retry / Repair / More Context / Human Gate"]
+```
+
+Evaluation Layer 应接入以下位置：
+
+| 位置 | 评估对象 | 目的 |
+|---|---|---|
+| Workflow Node 后 | 节点输出 | 尽早发现局部错误 |
+| 子 Agent 完成后 | 子 Agent 最终结果 | 保证返回给主 Agent 的结果可信 |
+| 主 Agent 汇总前 | 多个子 Agent 结果 | 检查冲突和证据覆盖 |
+| 最终报告返回前 | 用户可见报告 | 检查真实性、正确性、完整性和风险 |
+| 写入工具执行前 | 操作预览 | 检查高风险动作是否安全、必要、被确认 |
+| 离线回归时 | Golden Cases | 检查版本升级后的质量变化 |
+
+### 11.2 评估维度
+
+| 维度 | 问题 | 推荐方式 |
+|---|---|---|
+| Schema Validity | 输出结构是否符合约束 | JSON Schema / Pydantic |
+| Factuality | 事实陈述是否有证据支持 | Claim extraction + evidence matching |
+| Correctness | 结论、计算、分类是否正确 | 规则校验、工具复算、数据库复核 |
+| Completeness | 是否遗漏必需内容 | Checklist / required fields |
+| Consistency | 输出之间是否互相矛盾 | Cross-agent comparison |
+| Groundedness | 输出是否基于提供的上下文 | Context Bundle 对齐检查 |
+| Policy Compliance | 是否符合企业规则和权限 | Policy Engine |
+| Safety | 是否包含敏感泄漏或高风险动作 | DLP / safety rules |
+| Actionability | 建议是否可执行 | Rubric / LLM-as-judge |
+| Uncertainty Quality | 是否正确表达不确定性 | Confidence calibration |
+
+### 11.2.1 风险分级评估策略
+
+在线评估不应对所有任务套用同一组重型评估。建议按风险等级选择评估组合：
+
+| 风险等级 | 在线评估组合 | 处理策略 |
+|---|---|---|
+| low | schema_evaluation + required_fields_check | 自动通过或格式修复 |
+| medium | schema_evaluation + rule_evaluation + evidence_ref_check | 失败则补充上下文或重试 |
+| high | schema_evaluation + rule_evaluation + factuality_evaluation + correctness_evaluation + safety_evaluation | 失败则阻断或进入 Human Gate |
+| critical | high 全部评估 + policy_compliance + multi_approval_check + operation_preview_check | 必须人工审批，默认不自动执行 |
+
+`overall_score` 只能作为辅助排序或观察指标，不应作为唯一放行条件。以下维度应作为硬闸门：
+
+1. Schema 不通过时不得进入下一执行节点。
+2. Safety 不通过时必须阻断。
+3. Tool Permission 不通过时必须阻断。
+4. 高风险写入缺少 Human Gate 时必须阻断。
+5. 关键事实缺少 evidence_ref 时不得作为确定结论返回。
+6. 企业规则冲突时必须以 Policy Engine 或人工审批结果为准。
+
+LLM-as-judge 应优先用于离线评估、回归对比和少数高价值节点。在线使用时必须固定 judge 模型、rubric、temperature、输入范围和输出 Schema。
+
+### 11.3 真实性评估
+
+真实性评估关注“输出中的事实是否有证据支持”。
+
+推荐流程：
+
+1. 从输出中抽取 atomic claims。
+2. 为每个 claim 查找证据来源。
+3. 判断证据是否支持、反驳或无法判断该 claim。
+4. 对无证据 claim 降分或要求修改。
+5. 对关键 claim 要求明确 source_ref。
+
+Claim 评估结果示例：
+
+```json
+{
+  "claim": "The contract payment period is 90 days.",
+  "status": "supported",
+  "evidence": [
+    {
+      "source_ref": "doc_001#page=5#clause=4.2",
+      "quote": "payment shall be made within 90 days"
+    }
+  ],
+  "confidence": 0.98
+}
+```
+
+真实性评估建议：
+
+1. 合同、政策、审计类输出必须 evidence-first。
+2. 用户可见的关键结论必须带证据。
+3. 没有证据的结论不能伪装成事实，应表达为推测或限制。
+4. 与工具结果冲突时，以工具和原始证据优先。
+
+### 11.4 正确性评估
+
+正确性评估关注“结论是否对”。它不同于真实性。一个事实可能有证据，但基于事实做出的判断仍然可能错误。
+
+推荐方式：
+
+| 类型 | 示例 | 评估方法 |
+|---|---|---|
+| 计算正确性 | 财务指标、金额、比例 | 工具复算 |
+| 分类正确性 | 客户等级、风险等级 | 规则表 / 分类器复核 |
+| 规则正确性 | 是否需要 CFO 审批 | Policy Engine |
+| 流程正确性 | 是否跳过必需节点 | Workflow trace check |
+| 引用正确性 | 条款编号、来源页码 | source_ref 校验 |
+
+正确性评估应优先使用确定性方法。只有无法用规则和工具判断时，才使用 LLM-as-judge。
+
+### 11.5 Evaluation Policy
+
+每个 Agent、Workflow 和节点都可以定义 Evaluation Policy。
+
+示例：
+
+```yaml
+evaluation_policy:
+  agent_id: contract_risk_agent
+  workflow_id: contract_risk_review_v1
+  gates:
+    node_output:
+      required:
+        - schema_evaluation
+        - rule_evaluation
+    final_output:
+      required:
+        - schema_evaluation
+        - factuality_evaluation
+        - correctness_evaluation
+        - completeness_evaluation
+      thresholds:
+        factuality_score: 0.9
+        correctness_score: 0.85
+        completeness_score: 0.9
+    final_report:
+      required:
+        - claim_verification
+        - cross_agent_consistency
+        - safety_evaluation
+      thresholds:
+        factuality_score: 0.9
+        consistency_score: 0.85
+      hard_gates:
+        - safety_evaluation
+        - claim_verification
+      observability:
+        overall_score_reference: 0.88
+  failure_actions:
+    factuality_evaluation:
+      below_threshold: retrieve_more_evidence
+    correctness_evaluation:
+      below_threshold: retry_with_rule_check
+    safety_evaluation:
+      below_threshold: human_gate
+    overall_score_reference:
+      below_reference: add_limitations_and_review
+```
+
+建议 Evaluation Policy 显式声明风险等级，而不是只声明统一阈值：
+
+```yaml
+risk_tiers:
+  low:
+    required:
+      - schema_evaluation
+      - required_fields_check
+  medium:
+    required:
+      - schema_evaluation
+      - rule_evaluation
+      - evidence_ref_check
+  high:
+    required:
+      - schema_evaluation
+      - rule_evaluation
+      - factuality_evaluation
+      - correctness_evaluation
+      - safety_evaluation
+    hard_gates:
+      - safety_evaluation
+      - tool_permission_check
+      - human_gate_check
+```
+
+### 11.6 Evaluation Result
+
+评估结果必须结构化，不能只是自然语言评价。
+
+```json
+{
+  "evaluation_id": "eval_001",
+  "target_type": "sub_agent_final_output",
+  "target_id": "sub_002",
+  "agent_id": "contract_risk_agent",
+  "status": "passed",
+  "scores": {
+    "schema": 1.0,
+    "factuality": 0.94,
+    "correctness": 0.9,
+    "completeness": 0.92,
+    "consistency": 0.95,
+    "safety": 1.0,
+    "overall": 0.93
+  },
+  "findings": [
+    {
+      "severity": "warning",
+      "dimension": "completeness",
+      "message": "The recommendation does not mention negotiation priority.",
+      "suggested_action": "revise_output"
+    }
+  ],
+  "gate_action": "pass",
+  "created_at": "2026-05-21T10:00:00+08:00"
+}
+```
+
+### 11.7 评估失败处理
+
+不同失败类型应有不同处理策略：
+
+| 失败类型 | 处理 |
+|---|---|
+| Schema 不通过 | 自动修复格式或重试 |
+| 证据不足 | 补充检索、调用工具、要求更多上下文 |
+| 结论错误 | 回到相关 Workflow 节点重新执行 |
+| 子 Agent 冲突 | 主 Agent 触发冲突解决或人工确认 |
+| 安全不通过 | 阻断并进入 Human Gate |
+| 完整性不足 | 要求子 Agent 补充遗漏字段 |
+| 总分低于阈值 | 返回限制说明或失败状态 |
+
+### 11.8 在线评估与离线评估
+
+在线评估用于运行时拦截坏结果。
+
+在线评估特点：
+
+1. 快速。
+2. 低成本。
+3. 优先确定性校验。
+4. 只在关键节点使用较重的 LLM judge。
+
+离线评估用于持续质量改进。
+
+离线评估内容：
+
+1. Golden Case 回归。
+2. Prompt 版本对比。
+3. Workflow 版本对比。
+4. 模型升级对比。
+5. 子 Agent 单项能力评估。
+6. 端到端业务流程评估。
+7. 真实用户反馈回流分析。
+
+### 11.9 推荐评估原则
+
+1. 事实类问题优先看证据，不优先看模型自信度。
+2. 计算类问题优先工具复算，不交给模型判断。
+3. 规则类问题优先 Policy Engine，不依赖自由推理。
+4. 低置信度不是失败，但必须明确限制和不确定性。
+5. 高风险输出必须先经过 Evaluation Gate，再按评估结果进入 Human Gate 或 Tool Gateway。
+6. LLM-as-judge 需要固定 rubric、固定模型版本、低 temperature，并记录 judge 输入。
+7. Evaluation Result 本身也要可审计和可回放。
+
+## 12. Human-in-the-loop 机制
+
+### 12.1 触发条件
+
+以下情况应触发用户沟通：
+
+1. 缺少关键信息。
+2. 场景识别置信度不足。
+3. 任务计划包含高风险操作。
+4. 子 Agent 输出低置信度。
+5. 多个子 Agent 输出冲突。
+6. 工具调用需要写入外部系统。
+7. 即将发送外部邮件、提交审批、修改数据。
+8. 操作违反或接近违反企业规则。
+9. Evaluation Layer 判定真实性、正确性或安全性低于阈值。
+
+### 12.2 Human Gate 类型
+
+| 类型 | 用途 |
+|---|---|
+| clarification | 询问缺失信息 |
+| confirmation | 确认是否执行某操作 |
+| selection | 在多个候选对象中选择 |
+| approval | 对高风险操作进行审批 |
+| edit_before_action | 允许用户修改即将发送或写入的内容 |
+
+### 12.3 用户确认对象
+
+```json
+{
+  "gate_id": "gate_001",
+  "type": "confirmation",
+  "risk_level": "high",
+  "reason": "The agent is about to update customer status in CRM.",
+  "proposed_action": {
+    "tool_id": "crm.update_customer_status",
+    "customer_id": "cus_001",
+    "old_status": "lead",
+    "new_status": "qualified"
+  },
+  "options": [
+    "approve",
+    "reject",
+    "edit"
+  ]
+}
+```
+
+## 13. 输出稳定性设计
+
+为了让结果精准、稳定，建议采用以下机制：
+
+1. 所有 Agent 输入输出都使用 Schema。
+2. 所有 LLM 输出都进行结构化解析。
+3. LLM 节点使用低 temperature。
+4. Prompt 模板版本化。
+5. Tool 版本固定。
+6. Workflow 版本固定。
+7. 子 Agent 输出必须包含 evidence。
+8. 主 Agent 汇总前执行一致性校验。
+9. 低置信度结果触发复核或人工确认。
+10. 关键流程支持重放。
+11. 每次关键节点保存 Context Snapshot。
+12. 关键输出通过 Evaluation Gate。
+13. 引入 Golden Case 回归测试。
+14. 子 Agent Local Memory 隔离，避免跨场景上下文污染。
+
+子 Agent 输出示例：
+
+```json
+{
+  "sub_task_id": "sub_002",
+  "agent_id": "contract_risk_agent",
+  "status": "success",
+  "confidence": 0.88,
+  "output": {
+    "risk_level": "medium",
+    "risk_items": [
+      {
+        "title": "Payment period exceeds standard policy",
+        "evidence": "Clause 4.2",
+        "recommendation": "Change payment period to 30 days."
+      }
+    ]
+  },
+  "warnings": []
+}
+```
+
+## 14. 自主规划边界
+
+系统保留一定自主规划能力，但必须加边界。
+
+允许自主：
+
+1. 识别场景。
+2. 选择 Scenario Pack。
+3. 生成 Task Plan。
+4. 对子任务排序。
+5. 判断是否需要补充信息。
+6. 在允许范围内选择子 Agent。
+
+不允许自主：
+
+1. 调用未注册工具。
+2. 让子 Agent 执行超出 Role Profile 边界的任务。
+3. 绕过 Tool Policy。
+4. 绕过 Human Gate。
+5. 自行创建高风险写入动作。
+6. 将未经验证信息写入 Local Long-term Memory 或 Global Long-term Memory。
+7. 绕过 Evaluation Gate 返回高风险或低可信结果。
+8. 输出不符合 Schema 的最终结果。
+
+## 15. 数据模型建议
+
+### 15.1 Scenario Agent Registry
+
+```json
+{
+  "scenario_id": "contract_review",
+  "version": "1.0.0",
+  "min_agents": 1,
+  "max_agents": 20,
+  "allow_parallel_agents": true,
+  "max_parallel_agents": 4,
+  "agents": [
+    {
+      "agent_id": "document_parse_agent",
+      "role_id": "researcher",
+      "enabled": true,
+      "required": true,
+      "capabilities": ["document_parse"],
+      "workflow_id": "document_parse_v1"
+    },
+    {
+      "agent_id": "privacy_review_agent",
+      "role_id": "risk_reviewer",
+      "enabled": true,
+      "required": false,
+      "capabilities": ["privacy_clause_review"],
+      "workflow_id": "privacy_review_v1",
+      "activation_condition": "task.contains_personal_data == true"
+    }
+  ]
+}
+```
+
+### 15.2 Role Profile
+
+```json
+{
+  "role_id": "risk_reviewer",
+  "name": "Risk Reviewer",
+  "description": "Identify risks and produce evidence-backed risk judgments.",
+  "goals": [
+    "Detect business risks from provided evidence.",
+    "Assign risk level according to enterprise policy.",
+    "Provide actionable recommendations."
+  ],
+  "boundaries": [
+    "Do not execute write actions.",
+    "Do not invent facts without evidence.",
+    "Do not override enterprise policy."
+  ],
+  "allowed_task_types": [
+    "risk_assessment",
+    "policy_comparison"
+  ],
+  "output_requirements": {
+    "require_evidence": true,
+    "require_confidence": true,
+    "require_limitations": true
+  },
+  "default_policy_refs": {
+    "context_policy": "risk_reviewer_context_v1",
+    "evaluation_policy": "risk_reviewer_eval_v1",
+    "human_gate_policy": "medium_risk_confirmation_v1"
+  }
+}
+```
+
+### 15.3 Agent Profile
+
+```json
+{
+  "agent_id": "contract_risk_agent",
+  "agent_type": "sub_agent",
+  "role_id": "risk_reviewer",
+  "description": "Assess contract risk based on enterprise policy.",
+  "input_schema": "ContractRiskInput",
+  "output_schema": "ContractRiskOutput",
+  "workflow_id": "contract_risk_review_v1",
+  "allowed_tools": [
+    "policy.search",
+    "document.get_text"
+  ],
+  "memory_policy": {
+    "local_memory_namespace": "memory://default/contract_review/contract_risk_agent",
+    "core_snapshot": {
+      "enabled": true,
+      "max_tokens": 800,
+      "refresh_policy": "after_approved_memory_candidate"
+    },
+    "read": [
+      "local.session",
+      "local.working",
+      "local.short_term",
+      "local.long_term.risk_rule_mapping",
+      "local.core_snapshot",
+      "global.long_term.enterprise_rules"
+    ],
+    "write": [
+      "local.working",
+      "local.short_term.task_summary",
+      "local.long_term.risk_rule_mapping"
+    ],
+    "promote_to_global": {
+      "allowed": true,
+      "requires_validation": true,
+      "requires_approval": false,
+      "target_types": [
+        "validated_business_fact",
+        "workflow_improvement_signal"
+      ]
+    },
+    "share_with_other_agents": {
+      "allowed": false,
+      "via": "main_agent_or_memory_manager"
+    },
+    "episode_search": {
+      "enabled": true,
+      "allowed_scopes": [
+        "same_user",
+        "same_scenario",
+        "same_agent"
+      ],
+      "requires_context_manager": true
+    }
+  },
+  "context_policy": {
+    "default_budget_tokens": 6000,
+    "allowed_sources": [
+      "user_input",
+      "workflow_state",
+      "tool_evidence",
+      "global.long_term.enterprise_rules",
+      "local.long_term.risk_rule_mapping"
+    ],
+    "priority_order": [
+      "system_policy",
+      "user_confirmed_constraints",
+      "tool_evidence",
+      "enterprise_rules",
+      "local_memory"
+    ],
+    "snapshot_enabled": true
+  },
+  "evaluation_policy": {
+    "required_gates": [
+      "schema_evaluation",
+      "factuality_evaluation",
+      "correctness_evaluation",
+      "completeness_evaluation"
+    ],
+    "thresholds": {
+      "factuality": 0.9,
+      "correctness": 0.85,
+      "overall": 0.88
+    },
+    "failure_action": "retry_or_human_gate"
+  }
+}
+```
+
+### 15.4 Workflow Run
+
+```json
+{
+  "workflow_run_id": "wr_001",
+  "task_id": "task_001",
+  "workflow_id": "contract_risk_review_v1",
+  "status": "running",
+  "current_node": "risk_assessment",
+  "state": {},
+  "created_at": "2026-05-21T10:00:00+08:00",
+  "updated_at": "2026-05-21T10:01:00+08:00"
+}
+```
+
+### 15.5 Agent Local Memory Record
+
+```json
+{
+  "memory_id": "mem_001",
+  "tenant_id": "default",
+  "scenario_id": "contract_review",
+  "agent_id": "contract_risk_agent",
+  "scope": "local",
+  "layer": "short_term",
+  "memory_type": "task_summary",
+  "content": {
+    "summary": "Payment-period risk was detected and resolved by policy comparison.",
+    "related_policy": "standard_payment_period_30_days"
+  },
+  "source": {
+    "task_id": "task_001",
+    "sub_task_id": "sub_002",
+    "workflow_run_id": "wr_001"
+  },
+  "confidence": 0.9,
+  "expires_at": "2026-05-28T10:00:00+08:00",
+  "promotion_status": "not_requested"
+}
+```
+
+### 15.6 Context Bundle
+
+```json
+{
+  "context_bundle_id": "ctx_001",
+  "task_id": "task_001",
+  "sub_task_id": "sub_002",
+  "agent_id": "contract_risk_agent",
+  "workflow_id": "contract_risk_review_v1",
+  "node_id": "risk_assessment",
+  "context_policy_version": "contract_risk_context_v1",
+  "items": [],
+  "token_budget": {
+    "max_tokens": 6000,
+    "used_tokens": 4200
+  },
+  "snapshot_ref": "context_snapshot/ctx_001.json",
+  "created_at": "2026-05-21T10:00:00+08:00"
+}
+```
+
+### 15.7 Evaluation Result
+
+```json
+{
+  "evaluation_id": "eval_001",
+  "task_id": "task_001",
+  "sub_task_id": "sub_002",
+  "target_type": "sub_agent_final_output",
+  "target_id": "sub_002",
+  "evaluator_version": "contract_risk_eval_v1",
+  "status": "passed",
+  "scores": {
+    "factuality": 0.94,
+    "correctness": 0.9,
+    "completeness": 0.92,
+    "consistency": 0.95,
+    "safety": 1.0,
+    "overall": 0.93
+  },
+  "gate_action": "pass",
+  "snapshot_ref": "evaluation_snapshot/eval_001.json",
+  "created_at": "2026-05-21T10:00:00+08:00"
+}
+```
+
+### 15.8 Memory Candidate
+
+```json
+{
+  "candidate_id": "mem_candidate_001",
+  "created_by_agent_id": "contract_risk_agent",
+  "task_id": "task_001",
+  "candidate_type": "stable_rule_mapping",
+  "proposed_scope": "local",
+  "proposed_layer": "long_term",
+  "content": {
+    "pattern": "payment_period_exceeds_policy",
+    "action": "flag_as_medium_risk"
+  },
+  "evidence_refs": [
+    "evaluation:eval_001",
+    "context_snapshot:ctx_001"
+  ],
+  "status": "pending_evaluation",
+  "created_at": "2026-05-21T10:00:00+08:00"
+}
+```
+
+### 15.9 Core Memory Snapshot
+
+```json
+{
+  "snapshot_id": "core_contract_risk_agent_v3",
+  "scope": "agent",
+  "agent_id": "contract_risk_agent",
+  "version": "3",
+  "budget_tokens": 800,
+  "source_memory_ids": [
+    "mem_contract_risk_001"
+  ],
+  "items": [
+    {
+      "type": "stable_rule_mapping",
+      "content": "Payment period longer than policy should be flagged as payment_term_risk.",
+      "confidence": 0.95
+    }
+  ],
+  "created_at": "2026-05-21T10:00:00+08:00"
+}
+```
+
+### 15.10 Episode Record
+
+```json
+{
+  "episode_id": "episode_001",
+  "task_id": "task_001",
+  "scenario_id": "contract_review",
+  "agent_id": "contract_risk_agent",
+  "summary": "Detected payment period risk and generated a medium-risk recommendation.",
+  "outcome": "completed",
+  "evaluation_ref": "eval_001",
+  "visibility_scope": [
+    "same_user",
+    "same_scenario",
+    "same_agent"
+  ],
+  "created_at": "2026-05-21T10:00:00+08:00"
+}
+```
+
+### 15.11 Audit Event
+
+```json
+{
+  "event_id": "audit_001",
+  "task_id": "task_001",
+  "actor_type": "agent",
+  "actor_id": "sales_ops_agent",
+  "action": "tool_call",
+  "target": "crm.update_customer_status",
+  "risk_level": "high",
+  "user_confirmed": true,
+  "timestamp": "2026-05-21T10:03:00+08:00"
+}
+```
+
+## 16. 推荐技术选型
+
+| 模块 | 推荐方案 |
+|---|---|
+| Agent Runtime | Python |
+| API 层 | FastAPI |
+| Schema | Pydantic / JSON Schema |
+| Workflow Engine | 初期自研轻量 DAG；复杂后接 Temporal |
+| Context Manager | 自研 Context Bundle Builder + Token Budgeter |
+| Context Snapshot Store | PostgreSQL JSONB / Object Storage |
+| Evaluation Layer | 自研 Evaluation Gate + Evaluator Registry |
+| Evaluation Store | PostgreSQL JSONB / ClickHouse |
+| Tool Registry | YAML + PostgreSQL |
+| Global Memory Store | PostgreSQL + pgvector |
+| Sub-agent Local Memory Store | PostgreSQL 命名空间表 + pgvector collection 隔离 |
+| Episode Store | PostgreSQL FTS + pgvector |
+| Core Memory Snapshot Store | PostgreSQL JSONB / Object Storage |
+| Memory Candidate Queue | PostgreSQL / Redis Stream |
+| Session Store | Redis |
+| Queue | Redis Queue / Celery / Kafka |
+| Observability | OpenTelemetry |
+| Audit Log | PostgreSQL / ClickHouse |
+| 权限模型 | RBAC 预留 ABAC |
+| 测试 | pytest + Golden Case Runner |
+
+## 17. 建议工程目录
+
+```text
+agent_platform/
+  main_agent/
+    orchestrator.py
+    deterministic_orchestrator.py
+    planner.py
+    plan_validator.py
+    router.py
+    aggregator.py
+    human_gate.py
+
+  runtime/
+    workflow_engine.py
+    node_executor.py
+    state_store.py
+    schema_validator.py
+    workflow_linter.py
+    condition_dsl.py
+
+  context/
+    manager.py
+    bundle.py
+    policy.py
+    ranking.py
+    compression.py
+    budget.py
+    snapshot.py
+    redaction.py
+
+  evaluation/
+    layer.py
+    registry.py
+    policy.py
+    risk_tiers.py
+    result.py
+    gates.py
+    evaluators/
+      schema.py
+      factuality.py
+      correctness.py
+      completeness.py
+      consistency.py
+      safety.py
+
+  sub_agents/
+    base.py
+    registry.py
+    roles.py
+    selection.py
+    memory.py
+
+  skills/
+    base.py
+    registry.py
+
+  tools/
+    registry.py
+    gateway.py
+    policy.py
+    credentials.py
+    idempotency.py
+    approval.py
+    adapters/
+
+  memory/
+    manager.py
+    agent_memory.py
+    core_snapshot.py
+    episode_store.py
+    candidate.py
+    consolidation.py
+    session.py
+    working.py
+    short_term.py
+    long_term.py
+    policy.py
+    promotion.py
+    lifecycle.py
+    conflict.py
+
+  scenario_packs/
+    contract_review/
+      roles/
+      context_policies/
+      evaluation_policies/
+      memory_policies/
+      core_snapshots/
+    sales_ops/
+      roles/
+      context_policies/
+      evaluation_policies/
+      memory_policies/
+      core_snapshots/
+    finance_review/
+      roles/
+      context_policies/
+      evaluation_policies/
+      memory_policies/
+      core_snapshots/
+
+  schemas/
+    task.py
+    agent.py
+    agent_registry.py
+    role.py
+    workflow.py
+    context.py
+    evaluation.py
+    tool.py
+    memory.py
+    episode.py
+    memory_candidate.py
+    audit.py
+
+  evals/
+    golden_case_runner.py
+    online_eval_replay.py
+    fixtures/
+
+  observability/
+    tracing.py
+    metrics.py
+    audit.py
+```
+
+## 18. 分阶段落地计划
+
+### Phase 1：最小可用平台
+
+目标：跑通一个稳定、可回放、可审计的业务黄金路径，而不是一次性完成平台化能力。
+
+建设内容：
+
+1. 选择一个高价值场景，例如合同审查。
+2. 固定 2 到 3 个子 Agent，例如 document_parse_agent、risk_review_agent、report_agent。
+3. 实现 Deterministic Orchestrator 和 Plan Validator。
+4. LLM Planner 只生成候选 Task Plan，不直接执行。
+5. 使用代码 Workflow 或已锁定的配置 Workflow。
+6. 实现 Sub Agent 基类、固定 Agent Registry 和基础 Role Profile。
+7. 实现轻量 Workflow Engine：顺序节点、简单分支、节点状态、失败返回。
+8. 实现 Context Manager 基础版：Context Bundle、预算控制、来源标注和 evidence_ref。
+9. 实现 Evaluation 基础版：Schema、规则、必填项、证据引用检查。
+10. 实现 Skill Registry 基础版：固定 Skill、固定版本、单元测试。
+11. 实现 Tool Gateway 基础版：只读工具和少量写入工具预览。
+12. 写入类工具必须经过 Human Gate，支持 idempotency_key。
+13. 只启用 Session Memory 与 Working Memory。
+14. 暂不启用 Agent 自动写 Long-term Memory。
+15. 记录 Audit Log、Workflow Trace 和关键 Context Snapshot。
+16. 建立 10 到 30 个 Golden Cases，覆盖成功、缺失信息、低证据、高风险和失败路径。
+
+### Phase 2：企业级稳定性增强
+
+目标：让平台可以处理真实企业流程。
+
+建设内容：
+
+1. Tool Gateway 权限、审计、凭证隔离和 deny-by-default。
+2. 写入类工具 prepare / preview / approve / commit 四阶段流程。
+3. 幂等记录表、超时、重试和补偿策略。
+4. Context Policy、脱敏快照、上下文回放和访问审计。
+5. Evaluation Policy 风险分级：low、medium、high、critical。
+6. Factuality / Correctness / Consistency / Safety 评估器。
+7. Workflow 版本管理、签名、dry run 和回滚。
+8. Golden Case 回归测试进入 CI。
+9. Local Short-term Memory 和只读 Global Long-term Memory。
+10. Memory Candidate Pipeline 基础版，但长期写入仍需审批或规则校验。
+11. 结构化报告和 evidence-first 输出。
+12. 失败重试、任务恢复和人工接管。
+13. OpenTelemetry tracing、关键指标和告警。
+
+### Phase 3：多场景平台化
+
+目标：让多个业务场景低成本接入。
+
+建设内容：
+
+1. Scenario Pack 标准。
+2. 受限 DSL 的可配置 Workflow。
+3. 可配置 Role Profile、Agent Profile 和角色模板库。
+4. 多场景 Agent Registry、灰度和 A/B 测试。
+5. 场景路由优化和低置信度确认。
+6. 可视化流程查看和 Workflow Trace 回放。
+7. Context 可视化、上下文预算分析和证据链面板。
+8. Evaluation Dashboard：真实性、正确性、完整性和安全性趋势。
+9. Episode Search 基础版和历史任务回放。
+10. 多部门权限、数据分级和 ABAC 扩展。
+11. 统一评测、监控和成本面板。
+
+### Phase 4：长期记忆与治理自动化
+
+目标：在多场景稳定运行后，再逐步启用长期记忆和经验沉淀自动化。
+
+建设内容：
+
+1. Global Long-term Memory 受控写入。
+2. Core Memory Snapshot 自动刷新。
+3. Memory Consolidation。
+4. Skill Candidate 迁移流程。
+5. 子 Agent Memory 可视化和治理面板。
+6. Memory 冲突检测、过期检查和删除工作流。
+7. 跨场景经验迁移，但必须经过 Evaluation Gate、Policy Gate 和人工或管理员审批。
+
+## 19. 当前推荐结论
+
+基于你的需求，推荐采用以下架构策略：
+
+1. 整体采用主 Agent + 多子 Agent 的层级结构，但第一版只实现一个场景、一条黄金路径和 2 到 3 个固定子 Agent。
+2. 主 Agent 拆为 Deterministic Orchestrator 和 LLM Planner。LLM 只生成候选计划，确定性编排器才拥有执行权。
+3. 子 Agent 数量由 Scenario Pack / Agent Registry 自定义，不在代码中写死。
+4. 子 Agent 角色由 Role Profile 自定义，不在 Prompt 或代码里硬编码。
+5. 主 Agent 保留有限自主规划能力，但只能在注册能力范围内规划，并且所有计划必须经过 Plan Validator。
+6. 子 Agent 默认绑定固定 Workflow，关键流程优先使用代码 Workflow 或已签名、已审批的配置 Workflow。
+7. Workflow 采用混合定义：拓扑配置化，节点实现代码化；分支条件使用受限 DSL，禁止任意代码执行。
+8. Tool Registry 和 Tool Gateway 作为安全边界，所有工具调用必须通过 Tool Gateway。
+9. 写入类工具必须经过 prepare / preview / approve / commit 流程，并支持幂等、审计和补偿策略。
+10. Context Manager 作为上下文编译层，统一处理上下文选择、压缩、预算、权限、证据和快照。
+11. Context Snapshot 必须脱敏、加密、分级访问，并设置原始数据保留期。
+12. Evaluation Layer 采用风险分级策略，低风险用轻量确定性评估，高风险再启用事实性、正确性、安全性和人工闸门。
+13. `overall_score` 只能辅助观察，安全、权限、Schema、Human Gate 和关键证据缺失应作为硬闸门。
+14. 借鉴 Hermes 的小容量常驻记忆、Session Search 和 Skills as procedural memory，但采用企业级结构化、权限化和可审计实现。
+15. Memory 分层设计仍保留，但 Phase 1 只启用 Session / Working Memory，暂不允许 Agent 自动写 Long-term Memory。
+16. Long-term Memory 写入必须通过 Memory Candidate Pipeline、Evaluation Gate、Memory Policy 和必要审批。
+17. Core Memory Snapshot 只保存高价值、低风险、稳定、常用的信息摘要，并通过 Context Manager 按预算注入。
+18. 通过 Schema、Validator、Context Snapshot、Evaluation Result、Golden Case、Audit Log 和 Workflow Trace 保证稳定、精准和可回放。
+19. 平台化能力应在单场景稳定后再扩展，多场景配置、长期记忆、Episode Search、可视化治理和跨场景经验迁移都应后置。
