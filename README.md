@@ -1,0 +1,45 @@
+# PowerBanana
+
+PowerBanana is the v0.1 reference agent built from the AgentX v0.3 design.
+
+It implements a narrow, auditable data-analysis workflow:
+
+1. Load one CSV or simple XLSX dataset.
+2. Create a dataset snapshot.
+3. Profile basic schema and missing values.
+4. Scan uploaded cells as untrusted data for prompt-injection patterns.
+5. Execute controlled analysis steps through registered skill-like functions.
+6. Recompute and evaluate the result before returning a report.
+
+PowerBanana v0.1 intentionally supports a small first path: answering which channel has the highest conversion rate from `channel`, `visits`, and `orders` columns.
+
+## Run
+
+```powershell
+python -m powerbanana.cli path\to\data.csv "Which channel has the highest conversion rate?"
+```
+
+The command prints a structured JSON report containing the answer, dataset snapshot, security findings, step trace, evaluation result, and limitations.
+
+## Test
+
+```powershell
+python -m unittest discover -s tests
+```
+
+## Scope
+
+Supported in v0.1:
+
+- CSV files.
+- Simple XLSX files when `openpyxl` is installed.
+- Single-table analysis.
+- Conversion-rate question answering.
+- Step trace and deterministic evaluation.
+
+Not supported yet:
+
+- Multi-table joins.
+- Database connections.
+- Write-back, export, or external actions.
+- Complex forecasting or BI dashboards.

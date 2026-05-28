@@ -1,0 +1,15 @@
+[project]
+name = "powerbanana"
+version = "0.1.0"
+description = "PowerBanana v0.1 data analysis agent based on the AgentX v0.3 design"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+xlsx = ["openpyxl>=3.1"]
+
+[project.scripts]
+powerbanana = "powerbanana.cli:main"
+
+[tool.unittest]
+start-directory = "tests"
