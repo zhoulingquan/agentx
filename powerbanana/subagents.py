@@ -47,7 +47,8 @@ class DataProfileAgent:
         blackboard.rows = result.rows
         blackboard.dataset_snapshot = result.snapshot
         blackboard.record_tool_call(result.tool_call)
-        blackboard.security_findings = self._scan_security(result.rows)
+        for finding in self._scan_security(result.rows):
+            blackboard.record_security_finding(finding, self.profile.agent_id)
         output_ref = blackboard.write_artifact("data_profile_v1", blackboard.dataset_snapshot, self.profile.agent_id, expected_version=0)
         blackboard.record_agent(
             self.profile.agent_id,
@@ -94,13 +95,15 @@ class DataAnalysisAgent:
         if self._is_ambiguous_performance_question(question):
             blackboard.status = "needs_clarification"
             blackboard.answer = "Please specify the metric to optimize, such as conversion_rate, revenue, orders, or visits."
-            blackboard.evaluation = self.evaluation_runner.evaluate_gate(
-                blackboard,
-                verdict="needs_clarification",
-                failure_reasons=["ambiguous_metric"],
-                gate_action="needs_clarification",
-                target_type="clarification_gate",
-                target_ref="blackboard://task_001/decisions/clarification_required",
+            blackboard.record_evaluation(
+                self.evaluation_runner.evaluate_gate(
+                    blackboard,
+                    verdict="needs_clarification",
+                    failure_reasons=["ambiguous_metric"],
+                    gate_action="needs_clarification",
+                    target_type="clarification_gate",
+                    target_ref="blackboard://task_001/decisions/clarification_required",
+                )
             )
             blackboard.create_human_gate(
                 "clarification",
@@ -113,13 +116,15 @@ class DataAnalysisAgent:
         if not self._is_conversion_rate_question(question):
             blackboard.status = "needs_clarification"
             blackboard.answer = "PowerBanana v0.1 supports conversion-rate questions for CSV datasets. Please ask for conversion rate by group."
-            blackboard.evaluation = self.evaluation_runner.evaluate_gate(
-                blackboard,
-                verdict="needs_clarification",
-                failure_reasons=["unsupported_question"],
-                gate_action="needs_clarification",
-                target_type="clarification_gate",
-                target_ref="blackboard://task_001/decisions/unsupported_question",
+            blackboard.record_evaluation(
+                self.evaluation_runner.evaluate_gate(
+                    blackboard,
+                    verdict="needs_clarification",
+                    failure_reasons=["unsupported_question"],
+                    gate_action="needs_clarification",
+                    target_type="clarification_gate",
+                    target_ref="blackboard://task_001/decisions/unsupported_question",
+                )
             )
             blackboard.create_human_gate(
                 "clarification",
@@ -138,13 +143,15 @@ class DataAnalysisAgent:
         if missing:
             blackboard.status = "partial"
             blackboard.answer = f"Cannot compute conversion_rate because required fields are missing: {', '.join(missing)}."
-            blackboard.evaluation = self.evaluation_runner.evaluate_gate(
-                blackboard,
-                verdict="partial",
-                failure_reasons=["missing_required_fields"],
-                gate_action="return_partial",
-                target_type="analysis_precheck",
-                target_ref="blackboard://task_001/evaluations/missing_required_fields",
+            blackboard.record_evaluation(
+                self.evaluation_runner.evaluate_gate(
+                    blackboard,
+                    verdict="partial",
+                    failure_reasons=["missing_required_fields"],
+                    gate_action="return_partial",
+                    target_type="analysis_precheck",
+                    target_ref="blackboard://task_001/evaluations/missing_required_fields",
+                )
             )
             blackboard.limitations = ["Required fields for conversion_rate are channel, visits, and orders."]
             blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "partial", "blackboard://task_001/evaluations/missing_required_fields")
@@ -158,13 +165,15 @@ class DataAnalysisAgent:
         if not rates:
             blackboard.status = "partial"
             blackboard.answer = "Cannot compute conversion_rate because no group has visits greater than zero."
-            blackboard.evaluation = self.evaluation_runner.evaluate_gate(
-                blackboard,
-                verdict="partial",
-                failure_reasons=["no_valid_denominator"],
-                gate_action="return_partial",
-                target_type="analysis_precheck",
-                target_ref="blackboard://task_001/evaluations/no_valid_denominator",
+            blackboard.record_evaluation(
+                self.evaluation_runner.evaluate_gate(
+                    blackboard,
+                    verdict="partial",
+                    failure_reasons=["no_valid_denominator"],
+                    gate_action="return_partial",
+                    target_type="analysis_precheck",
+                    target_ref="blackboard://task_001/evaluations/no_valid_denominator",
+                )
             )
             blackboard.limitations = ["At least one row needs a numeric visits value greater than zero."]
             blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "partial", "blackboard://task_001/evaluations/no_valid_denominator")
@@ -182,7 +191,7 @@ class DataAnalysisAgent:
         )
         blackboard.analysis_result = analysis
         blackboard.step_trace = conversion_rate_step_trace(analysis, step_plan)
-        blackboard.evaluation = self.evaluation_runner.evaluate_analysis(blackboard)
+        blackboard.record_evaluation(self.evaluation_runner.evaluate_analysis(blackboard))
         blackboard.answer = f"{top_value} has the highest conversion_rate at {value:.2%}."
         blackboard.status = "completed" if blackboard.evaluation.gate_action in {"pass", "pass_with_warning"} else "partial"
         if skipped_rows:
@@ -256,6 +265,7 @@ class ReportAgent:
                 if node.status != "running"
             ],
             blackboard_events=blackboard.events,
+            blackboard_entries=blackboard.entries,
             task_plan=blackboard.task_plan,
             step_plan=blackboard.step_plan,
             artifact_versions=blackboard.artifact_versions,

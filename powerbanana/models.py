@@ -82,6 +82,20 @@ class BlackboardEvent:
 
 
 @dataclass(frozen=True)
+class BlackboardEntry:
+    entry_id: str
+    entry_type: str
+    owner_agent_id: str
+    source_ref: str
+    target_ref: str
+    visibility_scope: list[str]
+    confidence: float
+    version: int
+    payload: dict[str, Any]
+    audit_ref: str
+
+
+@dataclass(frozen=True)
 class TaskPlanNode:
     node_id: str
     agent_id: str
@@ -189,6 +203,7 @@ class PowerBananaReport:
     blackboard_events: list[BlackboardEvent]
     step_trace: list[StepRecord]
     evaluation: EvaluationResult
+    blackboard_entries: list[BlackboardEntry] = field(default_factory=list)
     task_plan: TaskPlan | None = None
     step_plan: StepPlan | None = None
     artifact_versions: dict[str, int] = field(default_factory=dict)

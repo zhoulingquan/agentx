@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any
 
 from .models import (
     AgentTraceEntry,
     AnalysisResult,
+    BlackboardEntry,
     BlackboardEvent,
     ContextBundle,
     DagNodeTrace,
@@ -40,6 +41,7 @@ class TaskBlackboard:
     agent_trace: list[AgentTraceEntry] = field(default_factory=list)
     dag_trace: list[DagNodeTrace] = field(default_factory=list)
     events: list[BlackboardEvent] = field(default_factory=list)
+    entries: list[BlackboardEntry] = field(default_factory=list)
     artifact_versions: dict[str, int] = field(default_factory=dict)
     human_gates: list[HumanGateRecord] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
@@ -51,16 +53,49 @@ class TaskBlackboard:
     def __post_init__(self) -> None:
         self.append_event("blackboard_created", "main_agent", f"blackboard://{self.task_id}", {"status": self.status})
 
-    def append_event(self, event_type: str, actor_id: str, target_ref: str, detail: dict[str, Any] | None = None) -> None:
-        self.events.append(
-            BlackboardEvent(
-                event_id=f"evt_{len(self.events) + 1:04d}",
-                event_type=event_type,
-                actor_id=actor_id,
-                target_ref=target_ref,
-                detail=detail or {},
-            )
+    def append_event(self, event_type: str, actor_id: str, target_ref: str, detail: dict[str, Any] | None = None) -> BlackboardEvent:
+        event = BlackboardEvent(
+            event_id=f"evt_{len(self.events) + 1:04d}",
+            event_type=event_type,
+            actor_id=actor_id,
+            target_ref=target_ref,
+            detail=detail or {},
         )
+        self.events.append(event)
+        return event
+
+    def write_entry(
+        self,
+        entry_type: str,
+        owner_agent_id: str,
+        source_ref: str,
+        target_ref: str,
+        payload: Any,
+        visibility_scope: list[str] | None = None,
+        confidence: float = 1.0,
+        version: int = 1,
+    ) -> BlackboardEntry:
+        entry_id = f"entry_{len(self.entries) + 1:04d}"
+        event = self.append_event(
+            "entry_written",
+            owner_agent_id,
+            target_ref,
+            {"entry_id": entry_id, "entry_type": entry_type, "version": version},
+        )
+        entry = BlackboardEntry(
+            entry_id=entry_id,
+            entry_type=entry_type,
+            owner_agent_id=owner_agent_id,
+            source_ref=source_ref,
+            target_ref=target_ref,
+            visibility_scope=visibility_scope or ["task"],
+            confidence=confidence,
+            version=version,
+            payload=self._serialize_payload(payload),
+            audit_ref=event.event_id,
+        )
+        self.entries.append(entry)
+        return entry
 
     def write_artifact(self, artifact_id: str, value: Any, actor_id: str, expected_version: int | None = None) -> str:
         current_version = self.artifact_versions.get(artifact_id, 0)
@@ -81,6 +116,44 @@ class TaskBlackboard:
                 "version": next_version,
                 "expected_version": expected_version,
             },
+        )
+        self.write_entry(
+            entry_type="artifact",
+            owner_agent_id=actor_id,
+            source_ref=f"agent://{actor_id}",
+            target_ref=target_ref,
+            payload=value,
+            visibility_scope=["task", "assigned_agents"],
+            confidence=1.0,
+            version=next_version,
+        )
+        return target_ref
+
+    def record_security_finding(self, finding: SecurityFinding, actor_id: str) -> str:
+        self.security_findings.append(finding)
+        target_ref = f"blackboard://{self.task_id}/security_findings/security_finding_{len(self.security_findings):03d}"
+        self.write_entry(
+            entry_type="security_finding",
+            owner_agent_id=actor_id,
+            source_ref=finding.source_ref,
+            target_ref=target_ref,
+            payload=finding,
+            visibility_scope=["task", "security_review"],
+            confidence=0.9,
+        )
+        return target_ref
+
+    def record_evaluation(self, evaluation: EvaluationResult, actor_id: str = "evaluation_layer") -> str:
+        self.evaluation = evaluation
+        target_ref = evaluation.target_ref or f"blackboard://{self.task_id}/evaluations/{evaluation.evaluation_id}"
+        self.write_entry(
+            entry_type="evaluation",
+            owner_agent_id=actor_id,
+            source_ref=f"evaluation://{evaluation.evaluation_id}",
+            target_ref=target_ref,
+            payload=evaluation,
+            visibility_scope=["task", "evaluation"],
+            confidence=1.0,
         )
         return target_ref
 
@@ -122,3 +195,12 @@ class TaskBlackboard:
         self.human_gates.append(record)
         self.append_event("human_gate_created", "human_gate", f"gate://{record.gate_id}", {"gate_type": gate_type, "reason": reason})
         return record
+
+    def _serialize_payload(self, value: Any) -> Any:
+        if is_dataclass(value):
+            return asdict(value)
+        if isinstance(value, list):
+            return [self._serialize_payload(item) for item in value]
+        if isinstance(value, dict):
+            return {key: self._serialize_payload(item) for key, item in value.items()}
+        return value

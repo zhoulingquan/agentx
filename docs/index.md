@@ -39,6 +39,7 @@ Which channel has the highest conversion rate?
 | Area | Page |
 |---|---|
 | Running and deployment | [Deployment](deployment.md) |
+| Task Blackboard | [Task Blackboard](blackboard.md) |
 | Golden cases and calibration | [Regression and Calibration](regression-and-calibration.md) |
 | Evaluation governance | [Evaluation Layer](evaluation-layer.md) |
 | GitHub workflow | [Repository Workflow](repository-workflow.md) |

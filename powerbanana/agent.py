@@ -62,6 +62,7 @@ class PowerBananaAgent:
                 if node.status != "running"
             ],
             blackboard_events=blackboard.events,
+            blackboard_entries=blackboard.entries,
             task_plan=blackboard.task_plan,
             step_plan=blackboard.step_plan,
             artifact_versions=blackboard.artifact_versions,

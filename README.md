@@ -23,7 +23,7 @@ The runtime now includes the first governance pieces from the v0.3 design:
 
 - `TaskDagExecutor` schedules `data_profile_agent -> data_analysis_agent -> report_agent`.
 - `TaskPlan` and `PlanValidator` freeze the fixed data-analysis plan before execution.
-- `TaskBlackboard` records event log entries for blackboard creation, DAG transitions, artifact writes, agent completion, and skill execution.
+- `TaskBlackboard` records event log entries and structured Blackboard entries for artifacts, security findings, and evaluations.
 - `TaskBlackboard` tracks artifact versions for first-write consistency checks.
 - `SkillRegistry` exposes versioned skills such as `compute_grouped_metric@0.1.0` and `rank_metric_values@0.1.0`.
 - `AutonomyPolicy` enforces the L2 analysis agent's allowed skills and maximum step count.
