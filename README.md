@@ -34,11 +34,21 @@ PowerBanana v0.1 intentionally supports a small first path: answering which chan
 
 ## Run
 
+Interactive mode:
+
+```powershell
+python -m powerbanana.cli --interactive
+```
+
+PowerBanana starts with a yellow ASCII `POWER BANANA` logo, then asks for a dataset path and analysis question.
+
+Single-run JSON mode:
+
 ```powershell
 python -m powerbanana.cli path\to\data.csv "Which channel has the highest conversion rate?"
 ```
 
-The command prints a structured JSON report containing the answer, dataset snapshot, security findings, step trace, evaluation result, and limitations.
+The single-run command prints a structured JSON report containing the answer, dataset snapshot, security findings, step trace, evaluation result, and limitations.
 
 ## Test
 
