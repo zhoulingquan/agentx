@@ -7,11 +7,15 @@ from .models import (
     AgentTraceEntry,
     AnalysisResult,
     BlackboardEvent,
+    ContextBundle,
     DagNodeTrace,
     DatasetSnapshot,
     EvaluationResult,
+    LLMSettings,
+    MemoryRecord,
     SecurityFinding,
     StepRecord,
+    ToolCallRecord,
 )
 
 
@@ -31,6 +35,10 @@ class TaskBlackboard:
     agent_trace: list[AgentTraceEntry] = field(default_factory=list)
     dag_trace: list[DagNodeTrace] = field(default_factory=list)
     events: list[BlackboardEvent] = field(default_factory=list)
+    tool_calls: list[ToolCallRecord] = field(default_factory=list)
+    context_bundle: ContextBundle | None = None
+    memory_records: list[MemoryRecord] = field(default_factory=list)
+    llm_settings: LLMSettings | None = None
     artifacts: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -67,3 +75,15 @@ class TaskBlackboard:
     def record_dag_node(self, node_id: str, agent_id: str, status: str, depends_on: list[str]) -> None:
         self.dag_trace.append(DagNodeTrace(node_id=node_id, agent_id=agent_id, status=status, depends_on=depends_on))
         self.append_event("dag_node_transition", "main_agent", f"dag://{node_id}", {"status": status, "agent_id": agent_id})
+
+    def record_tool_call(self, record: ToolCallRecord) -> None:
+        self.tool_calls.append(record)
+        self.append_event("tool_called", "tool_gateway", record.output_ref, {"tool_id": record.tool_id, "status": record.status})
+
+    def set_context_bundle(self, bundle: ContextBundle) -> None:
+        self.context_bundle = bundle
+        self.append_event("context_bundle_created", "context_manager", f"context://{bundle.context_bundle_id}", {"agent_id": bundle.agent_id})
+
+    def write_memory(self, record: MemoryRecord) -> None:
+        self.memory_records.append(record)
+        self.append_event("memory_written", "memory_manager", f"memory://{record.memory_id}", {"memory_type": record.memory_type})

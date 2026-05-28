@@ -25,6 +25,10 @@ The runtime now includes the first governance pieces from the v0.3 design:
 - `TaskBlackboard` records event log entries for blackboard creation, DAG transitions, artifact writes, agent completion, and skill execution.
 - `SkillRegistry` exposes versioned skills such as `compute_grouped_metric@0.1.0` and `rank_metric_values@0.1.0`.
 - `AutonomyPolicy` enforces the L2 analysis agent's allowed skills and maximum step count.
+- `ToolGateway` owns read-only dataset loading through `dataset.read_snapshot`.
+- `ContextManager` builds a trust-labeled context bundle for the autonomous analysis agent.
+- `MemoryManager` writes a local working-memory task summary after report generation.
+- `LLMSettings` records deterministic no-LLM mode for v0.1 while preserving a future model configuration boundary.
 
 PowerBanana v0.1 intentionally supports a small first path: answering which channel has the highest conversion rate from `channel`, `visits`, and `orders` columns.
 

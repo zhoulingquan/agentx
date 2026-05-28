@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .blackboard import TaskBlackboard
 from .dag import TaskDagExecutor, default_powerbanana_task_dag
+from .llm import default_llm_settings
 from .models import PowerBananaReport
 from .subagents import DataAnalysisAgent, DataProfileAgent, ReportAgent
 
@@ -25,6 +26,7 @@ class PowerBananaAgent:
 
     def answer(self, file_path: str | Path, question: str) -> PowerBananaReport:
         blackboard = TaskBlackboard(question=question)
+        blackboard.llm_settings = default_llm_settings()
         result = self.task_dag.run(
             blackboard,
             {
@@ -56,6 +58,10 @@ class PowerBananaAgent:
                 if node.status != "running"
             ],
             blackboard_events=blackboard.events,
+            tool_calls=blackboard.tool_calls,
+            context_bundle=blackboard.context_bundle,
+            memory_records=blackboard.memory_records,
+            llm_settings=blackboard.llm_settings,
             step_trace=blackboard.step_trace,
             evaluation=blackboard.evaluation,
             analysis_result=blackboard.analysis_result,

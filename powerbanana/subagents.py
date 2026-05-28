@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import csv
-import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from .blackboard import TaskBlackboard
+from .context import ContextManager
+from .memory import MemoryManager
 from .models import AnalysisResult, DatasetSnapshot, EvaluationResult, PowerBananaReport, SecurityFinding
 from .policies import AutonomyPolicy, default_data_analysis_policy
 from .skills import SkillRegistry, build_default_skill_registry, conversion_rate_step_trace, evaluate_metric
+from .tools import ToolGateway
 
 
 PROMPT_INJECTION_PATTERNS = (
@@ -30,65 +31,21 @@ class SubAgentProfile:
 class DataProfileAgent:
     profile = SubAgentProfile("data_profile_agent", "workflow", "data_profiler")
 
+    def __init__(self, tool_gateway: ToolGateway | None = None) -> None:
+        self.tool_gateway = tool_gateway or ToolGateway()
+
     def run(self, blackboard: TaskBlackboard, path: Path) -> None:
-        rows = self._load_rows(path)
-        blackboard.rows = rows
-        blackboard.dataset_snapshot = self._snapshot(path, rows)
-        blackboard.security_findings = self._scan_security(rows)
+        result = self.tool_gateway.read_dataset_snapshot(path)
+        blackboard.rows = result.rows
+        blackboard.dataset_snapshot = result.snapshot
+        blackboard.record_tool_call(result.tool_call)
+        blackboard.security_findings = self._scan_security(result.rows)
         output_ref = blackboard.write_artifact("data_profile_v1", blackboard.dataset_snapshot, self.profile.agent_id)
         blackboard.record_agent(
             self.profile.agent_id,
             self.profile.runtime_mode,
             "succeeded",
             output_ref,
-        )
-
-    def _load_rows(self, path: Path) -> list[dict[str, str]]:
-        suffix = path.suffix.lower()
-        if suffix == ".csv":
-            with path.open("r", newline="", encoding="utf-8-sig") as handle:
-                return list(csv.DictReader(handle))
-        if suffix == ".xlsx":
-            return self._load_xlsx_rows(path)
-        raise ValueError(f"Unsupported file type: {suffix}. PowerBanana v0.1 supports .csv and simple .xlsx files.")
-
-    def _load_xlsx_rows(self, path: Path) -> list[dict[str, str]]:
-        try:
-            from openpyxl import load_workbook
-        except ImportError as exc:
-            raise ValueError("Reading .xlsx files requires openpyxl. Install it or use CSV for PowerBanana v0.1.") from exc
-
-        workbook = load_workbook(path, read_only=True, data_only=True)
-        sheet = workbook.active
-        rows = list(sheet.iter_rows(values_only=True))
-        if not rows:
-            return []
-        headers = [str(value) if value is not None else "" for value in rows[0]]
-        records: list[dict[str, str]] = []
-        for row in rows[1:]:
-            records.append(
-                {
-                    header: "" if value is None else str(value)
-                    for header, value in zip(headers, row, strict=False)
-                    if header
-                }
-            )
-        return records
-
-    def _snapshot(self, path: Path, rows: list[dict[str, str]]) -> DatasetSnapshot:
-        file_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-        columns = list(rows[0].keys()) if rows else []
-        missing_counts = {
-            column: sum(1 for row in rows if not str(row.get(column, "")).strip())
-            for column in columns
-        }
-        return DatasetSnapshot(
-            dataset_id=path.stem,
-            dataset_version="upload_v1",
-            file_hash=f"sha256:{file_hash}",
-            row_count=len(rows),
-            columns=columns,
-            missing_counts=missing_counts,
         )
 
     def _scan_security(self, rows: list[dict[str, str]]) -> list[SecurityFinding]:
@@ -111,11 +68,18 @@ class DataProfileAgent:
 class DataAnalysisAgent:
     profile = SubAgentProfile("data_analysis_agent", "autonomous", "data_analyst", autonomy_level=2)
 
-    def __init__(self, skill_registry: SkillRegistry | None = None, autonomy_policy: AutonomyPolicy | None = None) -> None:
+    def __init__(
+        self,
+        skill_registry: SkillRegistry | None = None,
+        autonomy_policy: AutonomyPolicy | None = None,
+        context_manager: ContextManager | None = None,
+    ) -> None:
         self.skill_registry = skill_registry or build_default_skill_registry()
         self.autonomy_policy = autonomy_policy or default_data_analysis_policy()
+        self.context_manager = context_manager or ContextManager()
 
     def run(self, blackboard: TaskBlackboard) -> None:
+        self.context_manager.build_analysis_context(blackboard)
         question = blackboard.question
         if self._is_ambiguous_performance_question(question):
             blackboard.status = "needs_clarification"
@@ -194,11 +158,15 @@ class DataAnalysisAgent:
 class ReportAgent:
     profile = SubAgentProfile("report_agent", "workflow", "report_writer")
 
+    def __init__(self, memory_manager: MemoryManager | None = None) -> None:
+        self.memory_manager = memory_manager or MemoryManager()
+
     def run(self, blackboard: TaskBlackboard, agent_name: str, version: str) -> PowerBananaReport:
         if blackboard.dataset_snapshot is None or blackboard.evaluation is None:
             raise ValueError("report_agent requires dataset_snapshot and evaluation before generating a report.")
         if blackboard.status == "completed":
             self._final_consistency_check(blackboard)
+        self.memory_manager.write_task_summary(blackboard)
         blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "succeeded", "blackboard://task_001/artifacts/final_report_v1")
         return PowerBananaReport(
             agent_name=agent_name,
@@ -214,6 +182,10 @@ class ReportAgent:
                 if node.status != "running"
             ],
             blackboard_events=blackboard.events,
+            tool_calls=blackboard.tool_calls,
+            context_bundle=blackboard.context_bundle,
+            memory_records=blackboard.memory_records,
+            llm_settings=blackboard.llm_settings,
             step_trace=blackboard.step_trace,
             evaluation=blackboard.evaluation,
             analysis_result=blackboard.analysis_result,

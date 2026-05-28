@@ -58,6 +58,21 @@ class PowerBananaAgentTests(unittest.TestCase):
         self.assertIn("blackboard_created", [event.event_type for event in report.blackboard_events])
         self.assertIn("artifact_written", [event.event_type for event in report.blackboard_events])
         self.assertIn("skill_executed", [event.event_type for event in report.blackboard_events])
+        self.assertIn("tool_called", [event.event_type for event in report.blackboard_events])
+        self.assertIn("context_bundle_created", [event.event_type for event in report.blackboard_events])
+        self.assertIn("memory_written", [event.event_type for event in report.blackboard_events])
+        self.assertEqual(report.tool_calls[0].tool_id, "dataset.read_snapshot")
+        self.assertEqual(report.context_bundle.agent_id, "data_analysis_agent")
+        self.assertEqual(
+            [(item.ref, item.trust_level, item.allowed_use) for item in report.context_bundle.items],
+            [
+                ("dataset://task_001/upload_v1", "untrusted_user_content", "data_only"),
+                ("blackboard://task_001/artifacts/data_profile_v1", "verified_tool_result", "evidence"),
+            ],
+        )
+        self.assertEqual(report.memory_records[0].memory_type, "task_summary")
+        self.assertEqual(report.llm_settings.temperature, 0.0)
+        self.assertEqual(report.llm_settings.mode, "deterministic_no_llm")
 
     def test_marks_prompt_injection_cells_as_data_only_security_findings(self):
         path = self.write_csv(
