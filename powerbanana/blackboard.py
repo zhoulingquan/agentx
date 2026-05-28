@@ -11,10 +11,13 @@ from .models import (
     DagNodeTrace,
     DatasetSnapshot,
     EvaluationResult,
+    HumanGateRecord,
     LLMSettings,
     MemoryRecord,
     SecurityFinding,
+    StepPlan,
     StepRecord,
+    TaskPlan,
     ToolCallRecord,
 )
 
@@ -23,6 +26,7 @@ from .models import (
 class TaskBlackboard:
     task_id: str = "task_001"
     status: str = "created"
+    task_plan: TaskPlan | None = None
     rows: list[dict[str, str]] = field(default_factory=list)
     question: str = ""
     dataset_snapshot: DatasetSnapshot | None = None
@@ -31,10 +35,13 @@ class TaskBlackboard:
     evaluation: EvaluationResult | None = None
     answer: str = ""
     limitations: list[str] = field(default_factory=list)
+    step_plan: StepPlan | None = None
     step_trace: list[StepRecord] = field(default_factory=list)
     agent_trace: list[AgentTraceEntry] = field(default_factory=list)
     dag_trace: list[DagNodeTrace] = field(default_factory=list)
     events: list[BlackboardEvent] = field(default_factory=list)
+    artifact_versions: dict[str, int] = field(default_factory=dict)
+    human_gates: list[HumanGateRecord] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     context_bundle: ContextBundle | None = None
     memory_records: list[MemoryRecord] = field(default_factory=list)
@@ -55,10 +62,26 @@ class TaskBlackboard:
             )
         )
 
-    def write_artifact(self, artifact_id: str, value: Any, actor_id: str) -> str:
+    def write_artifact(self, artifact_id: str, value: Any, actor_id: str, expected_version: int | None = None) -> str:
+        current_version = self.artifact_versions.get(artifact_id, 0)
+        if expected_version is not None and expected_version != current_version:
+            raise ValueError(
+                f"Artifact version mismatch for {artifact_id}: expected {expected_version}, got {current_version}."
+            )
+        next_version = current_version + 1
+        self.artifact_versions[artifact_id] = next_version
         self.artifacts[artifact_id] = value
         target_ref = f"blackboard://{self.task_id}/artifacts/{artifact_id}"
-        self.append_event("artifact_written", actor_id, target_ref, {"artifact_id": artifact_id})
+        self.append_event(
+            "artifact_written",
+            actor_id,
+            target_ref,
+            {
+                "artifact_id": artifact_id,
+                "version": next_version,
+                "expected_version": expected_version,
+            },
+        )
         return target_ref
 
     def record_agent(self, agent_id: str, runtime_mode: str, status: str, output_ref: str) -> None:
@@ -87,3 +110,15 @@ class TaskBlackboard:
     def write_memory(self, record: MemoryRecord) -> None:
         self.memory_records.append(record)
         self.append_event("memory_written", "memory_manager", f"memory://{record.memory_id}", {"memory_type": record.memory_type})
+
+    def create_human_gate(self, gate_type: str, reason: str, prompt: str) -> HumanGateRecord:
+        record = HumanGateRecord(
+            gate_id=f"gate_{len(self.human_gates) + 1:03d}",
+            gate_type=gate_type,
+            status="pending",
+            reason=reason,
+            prompt=prompt,
+        )
+        self.human_gates.append(record)
+        self.append_event("human_gate_created", "human_gate", f"gate://{record.gate_id}", {"gate_type": gate_type, "reason": reason})
+        return record

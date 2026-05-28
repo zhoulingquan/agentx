@@ -76,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-i", "--interactive", action="store_true", help="Start the interactive CLI")
     args = parser.parse_args(argv)
 
-    if args.interactive:
+    if args.interactive or (args.file is None and args.question is None):
         return interactive_loop()
     if args.file is None or args.question is None:
         parser.error("file and question are required unless --interactive is used")

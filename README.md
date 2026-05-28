@@ -22,13 +22,17 @@ The v0.1 runtime includes explicit sub-agents:
 The runtime now includes the first governance pieces from the v0.3 design:
 
 - `TaskDagExecutor` schedules `data_profile_agent -> data_analysis_agent -> report_agent`.
+- `TaskPlan` and `PlanValidator` freeze the fixed data-analysis plan before execution.
 - `TaskBlackboard` records event log entries for blackboard creation, DAG transitions, artifact writes, agent completion, and skill execution.
+- `TaskBlackboard` tracks artifact versions for first-write consistency checks.
 - `SkillRegistry` exposes versioned skills such as `compute_grouped_metric@0.1.0` and `rank_metric_values@0.1.0`.
 - `AutonomyPolicy` enforces the L2 analysis agent's allowed skills and maximum step count.
+- `StepPlan` records skill steps with attempt and idempotency metadata before execution.
 - `ToolGateway` owns read-only dataset loading through `dataset.read_snapshot`.
 - `ContextManager` builds a trust-labeled context bundle for the autonomous analysis agent.
 - `MemoryManager` writes a local working-memory task summary after report generation.
 - `LLMSettings` records deterministic no-LLM mode for v0.1 while preserving a future model configuration boundary.
+- `HumanGateRecord` captures clarification gates for ambiguous questions.
 
 PowerBanana v0.1 intentionally supports a small first path: answering which channel has the highest conversion rate from `channel`, `visits`, and `orders` columns.
 
@@ -50,10 +54,25 @@ python -m powerbanana.cli path\to\data.csv "Which channel has the highest conver
 
 The single-run command prints a structured JSON report containing the answer, dataset snapshot, security findings, step trace, evaluation result, and limitations.
 
+Docker:
+
+```powershell
+docker build -t powerbanana .
+docker run --rm -it -v ${PWD}:/data powerbanana
+```
+
+Inside the container, type the mounted dataset path such as `/data/examples/sales.csv`. The image starts with `CMD ["powerbanana"]`, which opens the interactive CLI by default.
+
 ## Test
 
 ```powershell
 python -m unittest discover -s tests
+```
+
+Run golden cases:
+
+```powershell
+python -c "from pathlib import Path; from powerbanana.evals import GoldenCaseRunner; print(GoldenCaseRunner(Path('evals/golden_cases')).run_all())"
 ```
 
 ## Scope

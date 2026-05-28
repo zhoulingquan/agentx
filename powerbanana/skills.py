@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Callable, Any
 
-from .models import AnalysisResult, DatasetSnapshot, EvaluationResult, StepRecord
+from .models import AnalysisResult, DatasetSnapshot, EvaluationResult, StepPlan, StepRecord
 
 
 @dataclass(frozen=True)
@@ -74,7 +74,11 @@ def rank_metric_values(rates: dict[str, float]) -> tuple[str, float]:
     return max(rates.items(), key=lambda item: item[1])
 
 
-def conversion_rate_step_trace(analysis: AnalysisResult) -> list[StepRecord]:
+def conversion_rate_step_trace(analysis: AnalysisResult, step_plan: StepPlan | None = None) -> list[StepRecord]:
+    idempotency_by_step = {
+        step.step_id: step.idempotency_key
+        for step in step_plan.steps
+    } if step_plan else {}
     return [
         StepRecord(
             step_id="s1",
@@ -84,6 +88,7 @@ def conversion_rate_step_trace(analysis: AnalysisResult) -> list[StepRecord]:
             input_refs=["dataset://task_001/upload_v1"],
             output_ref="blackboard://task_001/artifacts/metric_result_s1_v1",
             expected_output_schema="MetricResult",
+            idempotency_key=idempotency_by_step.get("s1", ""),
         ),
         StepRecord(
             step_id="s2",
@@ -93,6 +98,7 @@ def conversion_rate_step_trace(analysis: AnalysisResult) -> list[StepRecord]:
             input_refs=["blackboard://task_001/artifacts/metric_result_s1_v1"],
             output_ref=analysis.evidence_ref,
             expected_output_schema="RankedMetricResult",
+            idempotency_key=idempotency_by_step.get("s2", ""),
         ),
     ]
 

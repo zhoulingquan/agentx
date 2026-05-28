@@ -31,6 +31,29 @@ class StepRecord:
     input_refs: list[str]
     output_ref: str
     expected_output_schema: str
+    attempt_id: str = "attempt_001"
+    idempotency_key: str = ""
+
+
+@dataclass(frozen=True)
+class StepPlanStep:
+    step_id: str
+    action_type: str
+    skill_id: str
+    input_refs: list[str]
+    expected_output_schema: str
+    idempotency_key: str
+    attempt_id: str = "attempt_001"
+    status: str = "pending"
+
+
+@dataclass(frozen=True)
+class StepPlan:
+    step_plan_id: str
+    agent_id: str
+    autonomy_level: int
+    steps: list[StepPlanStep]
+    status: str = "validated"
 
 
 @dataclass(frozen=True)
@@ -56,6 +79,31 @@ class BlackboardEvent:
     actor_id: str
     target_ref: str
     detail: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TaskPlanNode:
+    node_id: str
+    agent_id: str
+    runtime_mode: str
+    depends_on: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class TaskPlan:
+    plan_id: str
+    scenario_id: str
+    status: str
+    nodes: list[TaskPlanNode]
+
+
+@dataclass(frozen=True)
+class HumanGateRecord:
+    gate_id: str
+    gate_type: str
+    status: str
+    reason: str
+    prompt: str
 
 
 @dataclass(frozen=True)
@@ -130,6 +178,10 @@ class PowerBananaReport:
     blackboard_events: list[BlackboardEvent]
     step_trace: list[StepRecord]
     evaluation: EvaluationResult
+    task_plan: TaskPlan | None = None
+    step_plan: StepPlan | None = None
+    artifact_versions: dict[str, int] = field(default_factory=dict)
+    human_gates: list[HumanGateRecord] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     context_bundle: ContextBundle | None = None
     memory_records: list[MemoryRecord] = field(default_factory=list)

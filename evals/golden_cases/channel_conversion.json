@@ -1,0 +1,8 @@
+{
+  "case_id": "channel_conversion_rate_email_wins",
+  "dataset": "../fixtures/channel_conversion.csv",
+  "question": "Which channel has the highest conversion rate?",
+  "expected_status": "completed",
+  "expected_answer": "email has the highest conversion_rate at 20.00%.",
+  "expected_top_value": "email"
+}

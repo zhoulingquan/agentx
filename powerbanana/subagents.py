@@ -7,7 +7,15 @@ from pathlib import Path
 from .blackboard import TaskBlackboard
 from .context import ContextManager
 from .memory import MemoryManager
-from .models import AnalysisResult, DatasetSnapshot, EvaluationResult, PowerBananaReport, SecurityFinding
+from .models import (
+    AnalysisResult,
+    DatasetSnapshot,
+    EvaluationResult,
+    PowerBananaReport,
+    SecurityFinding,
+    StepPlan,
+    StepPlanStep,
+)
 from .policies import AutonomyPolicy, default_data_analysis_policy
 from .skills import SkillRegistry, build_default_skill_registry, conversion_rate_step_trace, evaluate_metric
 from .tools import ToolGateway
@@ -40,7 +48,7 @@ class DataProfileAgent:
         blackboard.dataset_snapshot = result.snapshot
         blackboard.record_tool_call(result.tool_call)
         blackboard.security_findings = self._scan_security(result.rows)
-        output_ref = blackboard.write_artifact("data_profile_v1", blackboard.dataset_snapshot, self.profile.agent_id)
+        output_ref = blackboard.write_artifact("data_profile_v1", blackboard.dataset_snapshot, self.profile.agent_id, expected_version=0)
         blackboard.record_agent(
             self.profile.agent_id,
             self.profile.runtime_mode,
@@ -85,6 +93,11 @@ class DataAnalysisAgent:
             blackboard.status = "needs_clarification"
             blackboard.answer = "Please specify the metric to optimize, such as conversion_rate, revenue, orders, or visits."
             blackboard.evaluation = EvaluationResult(verdict="needs_clarification", failure_reasons=["ambiguous_metric"], scores={})
+            blackboard.create_human_gate(
+                "clarification",
+                "ambiguous_metric",
+                "Please specify the metric to optimize, such as conversion_rate, revenue, orders, or visits.",
+            )
             blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "needs_clarification", "blackboard://task_001/decisions/clarification_required")
             return
 
@@ -92,6 +105,11 @@ class DataAnalysisAgent:
             blackboard.status = "needs_clarification"
             blackboard.answer = "PowerBanana v0.1 supports conversion-rate questions for CSV datasets. Please ask for conversion rate by group."
             blackboard.evaluation = EvaluationResult(verdict="needs_clarification", failure_reasons=["unsupported_question"], scores={})
+            blackboard.create_human_gate(
+                "clarification",
+                "unsupported_question",
+                "Please ask for a conversion-rate question using channel, visits, and orders.",
+            )
             blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "needs_clarification", "blackboard://task_001/decisions/unsupported_question")
             return
 
@@ -109,8 +127,9 @@ class DataAnalysisAgent:
             blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "partial", "blackboard://task_001/evaluations/missing_required_fields")
             return
 
-        step_plan = ["compute_grouped_metric", "rank_metric_values"]
-        self.autonomy_policy.validate_step_plan(step_plan)
+        step_plan = self._build_conversion_rate_step_plan()
+        blackboard.step_plan = step_plan
+        self.autonomy_policy.validate_step_plan([step.skill_id for step in step_plan.steps])
         rates, skipped_rows = self.skill_registry.execute("compute_grouped_metric", blackboard.rows)
         blackboard.append_event("skill_executed", self.profile.agent_id, "skill://compute_grouped_metric@0.1.0", {"step_id": "s1"})
         if not rates:
@@ -132,14 +151,39 @@ class DataAnalysisAgent:
             values=rates,
         )
         blackboard.analysis_result = analysis
-        blackboard.step_trace = conversion_rate_step_trace(analysis)
+        blackboard.step_trace = conversion_rate_step_trace(analysis, step_plan)
         blackboard.evaluation = evaluate_metric(snapshot, analysis)
         blackboard.answer = f"{top_value} has the highest conversion_rate at {value:.2%}."
         blackboard.status = "completed" if blackboard.evaluation.verdict == "pass" else "partial"
         if skipped_rows:
             blackboard.limitations.append(f"Skipped {skipped_rows} rows with missing or nonnumeric channel, visits, or orders.")
-        output_ref = blackboard.write_artifact("analysis_result_v1", analysis, self.profile.agent_id)
+        output_ref = blackboard.write_artifact("analysis_result_v1", analysis, self.profile.agent_id, expected_version=0)
         blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, blackboard.status, output_ref)
+
+    def _build_conversion_rate_step_plan(self) -> StepPlan:
+        return StepPlan(
+            step_plan_id="sp_task_001_analysis_v1",
+            agent_id=self.profile.agent_id,
+            autonomy_level=self.profile.autonomy_level or 0,
+            steps=[
+                StepPlanStep(
+                    step_id="s1",
+                    action_type="skill",
+                    skill_id="compute_grouped_metric",
+                    input_refs=["dataset://task_001/upload_v1"],
+                    expected_output_schema="MetricResult",
+                    idempotency_key="task_001_upload_v1_s1_compute_grouped_metric",
+                ),
+                StepPlanStep(
+                    step_id="s2",
+                    action_type="skill",
+                    skill_id="rank_metric_values",
+                    input_refs=["blackboard://task_001/artifacts/metric_result_s1_v1"],
+                    expected_output_schema="RankedMetricResult",
+                    idempotency_key="task_001_upload_v1_s2_rank_metric_values",
+                ),
+            ],
+        )
 
     def _require_snapshot(self, blackboard: TaskBlackboard) -> DatasetSnapshot:
         if blackboard.dataset_snapshot is None:
@@ -182,6 +226,10 @@ class ReportAgent:
                 if node.status != "running"
             ],
             blackboard_events=blackboard.events,
+            task_plan=blackboard.task_plan,
+            step_plan=blackboard.step_plan,
+            artifact_versions=blackboard.artifact_versions,
+            human_gates=blackboard.human_gates,
             tool_calls=blackboard.tool_calls,
             context_bundle=blackboard.context_bundle,
             memory_records=blackboard.memory_records,

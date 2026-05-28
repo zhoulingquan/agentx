@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from .blackboard import TaskBlackboard
-from .dag import TaskDagExecutor, default_powerbanana_task_dag
+from .dag import TaskDagExecutor
 from .llm import default_llm_settings
 from .models import PowerBananaReport
+from .plan import PlanValidator, default_powerbanana_task_plan
 from .subagents import DataAnalysisAgent, DataProfileAgent, ReportAgent
 
 
@@ -22,12 +23,13 @@ class PowerBananaAgent:
         self.data_profile_agent = data_profile_agent or DataProfileAgent()
         self.data_analysis_agent = data_analysis_agent or DataAnalysisAgent()
         self.report_agent = report_agent or ReportAgent()
-        self.task_dag = TaskDagExecutor(default_powerbanana_task_dag())
 
     def answer(self, file_path: str | Path, question: str) -> PowerBananaReport:
         blackboard = TaskBlackboard(question=question)
         blackboard.llm_settings = default_llm_settings()
-        result = self.task_dag.run(
+        blackboard.task_plan = PlanValidator().validate(default_powerbanana_task_plan())
+        task_dag = TaskDagExecutor(blackboard.task_plan.nodes)
+        result = task_dag.run(
             blackboard,
             {
                 "data_profile_agent": self.data_profile_agent.run,
@@ -58,6 +60,10 @@ class PowerBananaAgent:
                 if node.status != "running"
             ],
             blackboard_events=blackboard.events,
+            task_plan=blackboard.task_plan,
+            step_plan=blackboard.step_plan,
+            artifact_versions=blackboard.artifact_versions,
+            human_gates=blackboard.human_gates,
             tool_calls=blackboard.tool_calls,
             context_bundle=blackboard.context_bundle,
             memory_records=blackboard.memory_records,

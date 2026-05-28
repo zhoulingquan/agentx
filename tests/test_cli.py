@@ -43,6 +43,16 @@ class PowerBananaCliTests(unittest.TestCase):
         self.assertIn("POWER BANANA", text)
         self.assertIn("email has the highest conversion_rate at 20.00%.", text)
 
+    def test_no_args_defaults_to_interactive_mode(self):
+        user_input = iter(["q"])
+        stdout = io.StringIO()
+
+        with patch("builtins.input", lambda _prompt="": next(user_input)), redirect_stdout(stdout):
+            exit_code = cli.main([])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("POWER BANANA", stdout.getvalue())
+
     def test_single_run_mode_still_outputs_json(self):
         path = self.write_csv()
         stdout = io.StringIO()
@@ -52,3 +62,9 @@ class PowerBananaCliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn('"agent_name": "PowerBanana"', stdout.getvalue())
+
+    def test_dockerfile_starts_powerbanana_console_script(self):
+        dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+        self.assertIn("pip install", dockerfile)
+        self.assertIn('CMD ["powerbanana"]', dockerfile)
