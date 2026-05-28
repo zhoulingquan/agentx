@@ -142,6 +142,19 @@ Run calibration cases:
 python -c "from pathlib import Path; from powerbanana.evals import CalibrationRunner; print(CalibrationRunner(Path('evals/calibration_cases')).run_all())"
 ```
 
+## Repository Layout
+
+Keep these project assets in Git:
+
+| Path | Purpose |
+|---|---|
+| `powerbanana/` | Runtime source code. |
+| `tests/` | Automated tests for the CLI, Planner, Blackboard, DAG, and governance behavior. |
+| `evals/` | Synthetic golden cases, calibration cases, and fixtures. |
+| `docs/` | GitHub Pages documentation. |
+
+Keep real user datasets and local run outputs out of Git. Use local-only directories such as `local_data/`, `private_data/`, `user_uploads/`, or `runs/`.
+
 ## Scope
 
 Supported in v0.1:

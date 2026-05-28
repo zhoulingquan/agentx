@@ -45,6 +45,7 @@ Which channel has the highest conversion rate?
 | Golden cases and calibration | [Regression and Calibration](regression-and-calibration.md) |
 | Evaluation governance | [Evaluation Layer](evaluation-layer.md) |
 | GitHub workflow | [Repository Workflow](repository-workflow.md) |
+| Repository hygiene | [Repository Hygiene](repository-hygiene.md) |
 | Architecture source design | [AgentX v0.3 Design](enterprise_agent_design_v0.3.md) |
 
 ## Current Scope

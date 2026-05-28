@@ -4,9 +4,16 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 .venv/
 venv/
 build/
 dist/
 *.egg-info/
+*.log
 runs/
+local_data/
+private_data/
+user_uploads/
