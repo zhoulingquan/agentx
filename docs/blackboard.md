@@ -24,6 +24,7 @@ Each entry includes:
 | Entry Type | Written By | Example Target |
 |---|---|---|
 | `planner_trace` | `planner` | `blackboard://task_001/planner/plan_powerbanana_v0_1` |
+| `evaluation` | `evaluation_layer` | `blackboard://task_001/planner/plan_powerbanana_v0_1` |
 | `artifact` | `data_profile_agent`, `data_analysis_agent` | `blackboard://task_001/artifacts/analysis_result_v1` |
 | `security_finding` | `data_profile_agent` | `blackboard://task_001/security_findings/security_finding_001` |
 | `evaluation` | `evaluation_layer` | `blackboard://task_001/artifacts/analysis_result_v1` |

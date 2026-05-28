@@ -227,6 +227,7 @@ class PowerBananaReport:
     blackboard_entries: list[BlackboardEntry] = field(default_factory=list)
     task_plan: TaskPlan | None = None
     planner_trace: PlannerTrace | None = None
+    planner_evaluation: EvaluationResult | None = None
     step_plan: StepPlan | None = None
     artifact_versions: dict[str, int] = field(default_factory=dict)
     human_gates: list[HumanGateRecord] = field(default_factory=list)

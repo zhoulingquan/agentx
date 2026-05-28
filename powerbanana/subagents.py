@@ -268,6 +268,7 @@ class ReportAgent:
             blackboard_entries=blackboard.entries,
             task_plan=blackboard.task_plan,
             planner_trace=blackboard.planner_trace,
+            planner_evaluation=blackboard.planner_evaluation,
             step_plan=blackboard.step_plan,
             artifact_versions=blackboard.artifact_versions,
             human_gates=blackboard.human_gates,

@@ -24,8 +24,9 @@ class PowerBananaAgent:
         evaluation_runner: EvaluationRunner | None = None,
         planner: Planner | None = None,
     ) -> None:
+        self.evaluation_runner = evaluation_runner or EvaluationRunner()
         self.data_profile_agent = data_profile_agent or DataProfileAgent()
-        self.data_analysis_agent = data_analysis_agent or DataAnalysisAgent(evaluation_runner=evaluation_runner)
+        self.data_analysis_agent = data_analysis_agent or DataAnalysisAgent(evaluation_runner=self.evaluation_runner)
         self.report_agent = report_agent or ReportAgent()
         self.planner = planner or DeterministicDataFilePlanner()
 
@@ -35,6 +36,7 @@ class PowerBananaAgent:
         blackboard.llm_settings = default_llm_settings()
         planner_result = self.planner.plan(path, question)
         blackboard.record_planner_trace(planner_result.trace)
+        blackboard.record_planner_evaluation(self.evaluation_runner.evaluate_planner_trace(blackboard))
         blackboard.task_plan = PlanValidator().validate(planner_result.candidate_plan)
         task_dag = TaskDagExecutor(blackboard.task_plan.nodes)
         result = task_dag.run(
@@ -71,6 +73,7 @@ class PowerBananaAgent:
             blackboard_entries=blackboard.entries,
             task_plan=blackboard.task_plan,
             planner_trace=blackboard.planner_trace,
+            planner_evaluation=blackboard.planner_evaluation,
             step_plan=blackboard.step_plan,
             artifact_versions=blackboard.artifact_versions,
             human_gates=blackboard.human_gates,

@@ -35,6 +35,7 @@ class TaskBlackboard:
     dataset_snapshot: DatasetSnapshot | None = None
     security_findings: list[SecurityFinding] = field(default_factory=list)
     analysis_result: AnalysisResult | None = None
+    planner_evaluation: EvaluationResult | None = None
     evaluation: EvaluationResult | None = None
     answer: str = ""
     limitations: list[str] = field(default_factory=list)
@@ -155,6 +156,20 @@ class TaskBlackboard:
             target_ref=target_ref,
             payload=evaluation,
             visibility_scope=["task", "evaluation"],
+            confidence=1.0,
+        )
+        return target_ref
+
+    def record_planner_evaluation(self, evaluation: EvaluationResult, actor_id: str = "evaluation_layer") -> str:
+        self.planner_evaluation = evaluation
+        target_ref = evaluation.target_ref or f"blackboard://{self.task_id}/evaluations/{evaluation.evaluation_id}"
+        self.write_entry(
+            entry_type="evaluation",
+            owner_agent_id=actor_id,
+            source_ref=f"evaluation://{evaluation.evaluation_id}",
+            target_ref=target_ref,
+            payload=evaluation,
+            visibility_scope=["task", "planning", "evaluation"],
             confidence=1.0,
         )
         return target_ref

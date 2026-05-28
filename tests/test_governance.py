@@ -47,6 +47,9 @@ class PowerBananaGovernanceTests(unittest.TestCase):
         self.assertEqual(report.task_plan.status, "frozen")
         self.assertIsNotNone(report.planner_trace)
         self.assertEqual(report.planner_trace.planner_id, "deterministic_data_file_planner")
+        self.assertIsNotNone(report.planner_evaluation)
+        self.assertEqual(report.planner_evaluation.target_type, "planner_trace")
+        self.assertEqual(report.planner_evaluation.gate_action, "pass")
         self.assertEqual(
             [node.agent_id for node in report.task_plan.nodes],
             ["data_profile_agent", "data_analysis_agent", "report_agent"],
@@ -97,6 +100,12 @@ class PowerBananaGovernanceTests(unittest.TestCase):
         self.assertIn("artifact", entry_types)
         self.assertIn("security_finding", entry_types)
         self.assertIn("evaluation", entry_types)
+        self.assertTrue(
+            any(
+                entry.entry_type == "evaluation" and entry.payload["target_type"] == "planner_trace"
+                for entry in report.blackboard_entries
+            )
+        )
         self.assertTrue(all(entry.audit_ref.startswith("evt_") for entry in report.blackboard_entries))
 
         artifact_entries = [entry for entry in report.blackboard_entries if entry.entry_type == "artifact"]

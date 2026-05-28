@@ -10,6 +10,7 @@ The current implementation is deterministic and does not call an LLM. It classif
 |---|---|---|---|
 | User request | `PowerBananaAgent` | File path and question | The request is still treated as untrusted input. |
 | Candidate planning | `DeterministicDataFilePlanner` | `PlannerResult` | Produces a candidate `TaskPlan` plus `PlannerTrace`. |
+| Planner evaluation | `PlannerIntentEvaluator` | `planner_evaluation` | Checks intent consistency, confidence, and required warnings. |
 | Validation | `PlanValidator` | Frozen `TaskPlan` | Checks known agents, runtime modes, duplicate node ids, and dependencies. |
 | Scheduling | `TaskDagExecutor` | DAG trace | Executes only the frozen plan. |
 | Reporting | `ReportAgent` | `PowerBananaReport` | Includes both `task_plan` and `planner_trace`. |
@@ -23,6 +24,7 @@ The current implementation is deterministic and does not call an LLM. It classif
 - It emits a candidate plan for `data_profile_agent -> data_analysis_agent -> report_agent`.
 - It does not execute tools, read data, mutate files, or decide final answers.
 - It writes an auditable `planner_trace` Blackboard entry with `intent`, `confidence`, matched signals, warnings, and lexicon version before validation.
+- Its trace is evaluated before the candidate plan is frozen.
 
 This gives PowerBanana the same architectural slot that a future LLM planner will use, without introducing model nondeterminism yet.
 

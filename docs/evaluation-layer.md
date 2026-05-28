@@ -2,16 +2,37 @@
 
 PowerBanana uses a deterministic, extensible Evaluation Layer. Evaluators inspect structured context and return an `EvaluatorOutcome`; the `EvaluationRunner` aggregates all outcomes into one `EvaluationResult`.
 
+The layer now evaluates two targets:
+
+| Target | Entry Point | Report Field |
+|---|---|---|
+| Planner trace | `EvaluationRunner.evaluate_planner_trace` | `planner_evaluation` |
+| Analysis result | `EvaluationRunner.evaluate_analysis` | `evaluation` |
+
 ## Default Evaluators
 
 | Evaluator | Purpose | Typical Gate |
 |---|---|---|
+| `planner_intent_evaluator` | Checks Planner intent, confidence, scenario consistency, and required warnings | `block` |
 | `schema_evaluator` | Ensures required evaluation inputs exist | `block` |
 | `dataset_reference_evaluator` | Checks dataset version consistency | `block` |
 | `field_reference_evaluator` | Checks result fields reference dataset columns | `return_partial` |
 | `evidence_coverage_evaluator` | Checks evidence refs and step trace coverage | `block` |
 | `metric_recompute_evaluator` | Recomputes conversion rate from rows | `block` |
 | `context_security_evaluator` | Checks prompt-injection findings were handled as data | `human_review` |
+
+## Planner Evaluation
+
+`PlannerIntentEvaluator` checks Planner output before the Task Plan is frozen and executed. It blocks when:
+
+- `PlannerTrace` is missing.
+- `PlannerTrace.intent` is missing.
+- `PlannerTrace.scenario_id` and `PlannerIntent.scenario_id` disagree.
+- A known non-`unknown` scenario has confidence below `0.5`.
+- `unsupported_*` scenarios do not carry `unsupported_capability`.
+- `ambiguous_metric` does not carry `missing_metric`.
+
+Planner evaluation is recorded separately as `planner_evaluation`, so final answer evaluation remains focused on the analysis result.
 
 ## Gate Actions
 

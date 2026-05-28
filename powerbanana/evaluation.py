@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from .models import AnalysisResult, DatasetSnapshot, EvaluationResult, SecurityFinding, StepRecord
+from .models import AnalysisResult, DatasetSnapshot, EvaluationResult, PlannerTrace, SecurityFinding, StepRecord
 
 
 GATE_ACTION_ORDER = {
@@ -27,6 +27,8 @@ class EvaluationContext:
     analysis_result: AnalysisResult | None
     security_findings: list[SecurityFinding]
     step_trace: list[StepRecord]
+    question: str = ""
+    planner_trace: PlannerTrace | None = None
     target_type: str = "analysis_result"
     target_ref: str = "blackboard://task_001/artifacts/analysis_result_v1"
 
@@ -105,6 +107,26 @@ class EvaluationRunner:
             target_ref=f"blackboard://{blackboard.task_id}/artifacts/analysis_result_v1",
         )
         return self.evaluate_context(context)
+
+    def evaluate_planner_trace(self, blackboard: Any) -> EvaluationResult:
+        context = EvaluationContext(
+            task_id=blackboard.task_id,
+            rows=[],
+            dataset_snapshot=None,
+            analysis_result=None,
+            security_findings=[],
+            step_trace=[],
+            question=blackboard.question,
+            planner_trace=blackboard.planner_trace,
+            target_type="planner_trace",
+            target_ref=(
+                f"blackboard://{blackboard.task_id}/planner/{blackboard.planner_trace.candidate_plan_id}"
+                if blackboard.planner_trace is not None
+                else f"blackboard://{blackboard.task_id}/planner"
+            ),
+        )
+        outcomes = [PlannerIntentEvaluator().evaluate(context)]
+        return self._persist(context, aggregate_outcomes(context, outcomes))
 
     def evaluate_context(self, context: EvaluationContext) -> EvaluationResult:
         outcomes = [evaluator.evaluate(context) for evaluator in self.registry.list()]
@@ -377,6 +399,58 @@ class ContextSecurityEvaluator:
         )
 
 
+class PlannerIntentEvaluator:
+    evaluator_id = "planner_intent_evaluator"
+    version = "0.1.0"
+
+    def evaluate(self, context: EvaluationContext) -> EvaluatorOutcome:
+        trace = context.planner_trace
+        failures: list[str] = []
+        blocking_issues: list[str] = []
+        warnings: list[str] = []
+        score = 1.0
+
+        if trace is None:
+            failures.append("missing_planner_trace")
+            blocking_issues.append("missing_planner_trace")
+            score = 0.0
+        elif trace.intent is None:
+            failures.append("missing_planner_intent")
+            blocking_issues.append("missing_planner_intent")
+            score = 0.0
+        else:
+            intent = trace.intent
+            if intent.scenario_id != trace.scenario_id:
+                failures.append("planner_scenario_mismatch")
+                blocking_issues.append("planner_scenario_mismatch")
+                score = 0.0
+            if intent.scenario_id != "unknown" and intent.confidence < 0.5:
+                failures.append("planner_confidence_too_low")
+                blocking_issues.append("planner_confidence_too_low")
+                score = 0.0
+            if intent.scenario_id.startswith("unsupported_") and "unsupported_capability" not in intent.warnings:
+                failures.append("missing_unsupported_warning")
+                blocking_issues.append("missing_unsupported_warning")
+                score = 0.0
+            if intent.scenario_id == "ambiguous_metric" and "missing_metric" not in intent.warnings:
+                failures.append("missing_metric_warning")
+                blocking_issues.append("missing_metric_warning")
+                score = 0.0
+            warnings = intent.warnings
+
+        return EvaluatorOutcome(
+            evaluator_id=self.evaluator_id,
+            version=self.version,
+            passed=not failures,
+            failure_reasons=failures,
+            blocking_issues=blocking_issues,
+            warnings=warnings,
+            scores={"planner_intent": score},
+            gate_action="pass" if not failures else "block",
+            evidence_refs=[context.target_ref] if context.target_ref else [],
+        )
+
+
 def default_evaluator_registry() -> EvaluatorRegistry:
     return EvaluatorRegistry(
         [
@@ -506,6 +580,8 @@ def evaluation_context_from_dict(data: dict[str, Any]) -> EvaluationContext:
         analysis_result=_analysis_result_from_dict(data.get("analysis_result")),
         security_findings=[SecurityFinding(**item) for item in data.get("security_findings", [])],
         step_trace=[StepRecord(**item) for item in data.get("step_trace", [])],
+        question=data.get("question", ""),
+        planner_trace=_planner_trace_from_dict(data.get("planner_trace")),
         target_type=data.get("target_type", "analysis_result"),
         target_ref=data.get("target_ref", "blackboard://task_001/artifacts/analysis_result_v1"),
     )
@@ -521,6 +597,17 @@ def _analysis_result_from_dict(data: dict[str, Any] | None) -> AnalysisResult | 
     if data is None:
         return None
     return AnalysisResult(**data)
+
+
+def _planner_trace_from_dict(data: dict[str, Any] | None) -> PlannerTrace | None:
+    if data is None:
+        return None
+    intent_data = data.get("intent")
+    if intent_data is not None and not hasattr(intent_data, "scenario_id"):
+        from .models import PlannerIntent
+
+        data = {**data, "intent": PlannerIntent(**intent_data)}
+    return PlannerTrace(**data)
 
 
 def _evaluation_differences(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
