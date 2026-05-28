@@ -40,6 +40,7 @@ Which channel has the highest conversion rate?
 |---|---|
 | Running and deployment | [Deployment](deployment.md) |
 | Planner boundary | [Planner](planner.md) |
+| Planner lexicon | [Planner Lexicon](planner-lexicon.md) |
 | Task Blackboard | [Task Blackboard](blackboard.md) |
 | Golden cases and calibration | [Regression and Calibration](regression-and-calibration.md) |
 | Evaluation governance | [Evaluation Layer](evaluation-layer.md) |
@@ -55,6 +56,7 @@ Supported:
 - Single-table conversion-rate analysis.
 - Deterministic no-LLM execution.
 - Deterministic candidate planning before DAG execution.
+- Governed planner lexicon for scenario classification.
 - Task DAG trace, Blackboard events, Step trace, Evaluation result.
 - Golden cases, calibration cases, and replay snapshots.
 

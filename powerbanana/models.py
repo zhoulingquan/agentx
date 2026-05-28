@@ -112,6 +112,14 @@ class TaskPlan:
 
 
 @dataclass(frozen=True)
+class PlannerIntent:
+    scenario_id: str
+    confidence: float
+    matched_signals: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class PlannerTrace:
     planner_id: str
     planner_mode: str
@@ -120,6 +128,8 @@ class PlannerTrace:
     candidate_plan_id: str
     rationale: str
     warnings: list[str] = field(default_factory=list)
+    intent: PlannerIntent | None = None
+    lexicon_version: str = ""
 
 
 @dataclass(frozen=True)
