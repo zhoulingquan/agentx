@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from powerbanana.agent import PowerBananaAgent
+from powerbanana.subagents import build_default_subagent_registry
 
 
 class PowerBananaAgentTests(unittest.TestCase):
@@ -36,6 +37,14 @@ class PowerBananaAgentTests(unittest.TestCase):
         self.assertEqual([step.skill_id for step in report.step_trace], ["compute_grouped_metric", "rank_metric_values"])
         self.assertEqual(report.evaluation.verdict, "pass")
         self.assertEqual(report.evaluation.failure_reasons, [])
+        self.assertEqual(
+            [entry.agent_id for entry in report.agent_trace],
+            ["data_profile_agent", "data_analysis_agent", "report_agent"],
+        )
+        self.assertEqual(
+            [entry.runtime_mode for entry in report.agent_trace],
+            ["workflow", "autonomous", "workflow"],
+        )
 
     def test_marks_prompt_injection_cells_as_data_only_security_findings(self):
         path = self.write_csv(
@@ -66,6 +75,15 @@ class PowerBananaAgentTests(unittest.TestCase):
         self.assertEqual(report.status, "needs_clarification")
         self.assertIn("metric", report.answer.lower())
         self.assertEqual(report.step_trace, [])
+        self.assertEqual([entry.agent_id for entry in report.agent_trace], ["data_profile_agent", "data_analysis_agent"])
+
+    def test_default_subagent_registry_exposes_v03_runtime_modes(self):
+        registry = build_default_subagent_registry()
+
+        self.assertEqual(registry["data_profile_agent"].runtime_mode, "workflow")
+        self.assertEqual(registry["data_analysis_agent"].runtime_mode, "autonomous")
+        self.assertEqual(registry["data_analysis_agent"].autonomy_level, 2)
+        self.assertEqual(registry["report_agent"].runtime_mode, "workflow")
 
 
 if __name__ == "__main__":

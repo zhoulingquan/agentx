@@ -34,6 +34,14 @@ class StepRecord:
 
 
 @dataclass(frozen=True)
+class AgentTraceEntry:
+    agent_id: str
+    runtime_mode: str
+    status: str
+    output_ref: str
+
+
+@dataclass(frozen=True)
 class AnalysisResult:
     metric: str
     group_by: str
@@ -58,6 +66,7 @@ class PowerBananaReport:
     answer: str
     dataset_snapshot: DatasetSnapshot
     security_findings: list[SecurityFinding]
+    agent_trace: list[AgentTraceEntry]
     step_trace: list[StepRecord]
     evaluation: EvaluationResult
     analysis_result: AnalysisResult | None = None

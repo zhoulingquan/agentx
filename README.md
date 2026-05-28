@@ -11,6 +11,14 @@ It implements a narrow, auditable data-analysis workflow:
 5. Execute controlled analysis steps through registered skill-like functions.
 6. Recompute and evaluate the result before returning a report.
 
+The v0.1 runtime includes explicit sub-agents:
+
+| Sub-agent | Runtime | Responsibility |
+|---|---|---|
+| `data_profile_agent` | `workflow` | Load the file, create the dataset snapshot, profile columns, and scan untrusted cells. |
+| `data_analysis_agent` | `autonomous` L2 | Execute the controlled Step Plan through skill-like functions. |
+| `report_agent` | `workflow` | Run final consistency checks and produce the structured report. |
+
 PowerBanana v0.1 intentionally supports a small first path: answering which channel has the highest conversion rate from `channel`, `visits`, and `orders` columns.
 
 ## Run
