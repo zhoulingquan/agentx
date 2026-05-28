@@ -7,6 +7,7 @@ from typing import Any
 
 from .agent import PowerBananaAgent
 from .evaluation import EvaluationRunner, evaluation_context_from_dict
+from .planner import DeterministicDataFilePlanner
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,23 @@ class CalibrationSummary:
     escalation_miss: int
     over_escalation: int
     results: list[CalibrationCaseResult] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PlannerGoldenCaseResult:
+    case_id: str
+    passed: bool
+    expected_scenario: str
+    actual_scenario: str
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class PlannerGoldenCaseSummary:
+    total: int
+    passed: int
+    failed: int
+    results: list[PlannerGoldenCaseResult] = field(default_factory=list)
 
 
 class GoldenCaseRunner:
@@ -114,6 +132,62 @@ class GoldenCaseRunner:
             for column, expected_count in data["expected_missing_counts"].items():
                 actual_count = report.dataset_snapshot.missing_counts.get(column)
                 self._expect_equal(failures, f"missing_counts.{column}", actual_count, expected_count)
+        return failures
+
+    def _expect_equal(self, failures: list[str], field_name: str, actual: Any, expected: Any) -> None:
+        if actual != expected:
+            failures.append(f"{field_name} expected {expected!r}, got {actual!r}")
+
+
+class PlannerGoldenCaseRunner:
+    def __init__(self, cases_dir: Path, planner: DeterministicDataFilePlanner | None = None) -> None:
+        self.cases_dir = cases_dir
+        self.planner = planner or DeterministicDataFilePlanner()
+
+    def run_all(self) -> PlannerGoldenCaseSummary:
+        results = [self._run_case(path) for path in sorted(self.cases_dir.glob("*.json"))]
+        passed = sum(1 for result in results if result.passed)
+        return PlannerGoldenCaseSummary(
+            total=len(results),
+            passed=passed,
+            failed=len(results) - passed,
+            results=results,
+        )
+
+    def _run_case(self, path: Path) -> PlannerGoldenCaseResult:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        planner_result = self.planner.plan(Path(data.get("file_path", "sample.csv")), data["question"])
+        intent = planner_result.trace.intent
+        if intent is None:
+            return PlannerGoldenCaseResult(
+                case_id=data["case_id"],
+                passed=False,
+                expected_scenario=data["expected_scenario"],
+                actual_scenario="",
+                reason="planner trace did not include intent",
+            )
+        failures = self._check_intent(intent, data)
+        return PlannerGoldenCaseResult(
+            case_id=data["case_id"],
+            passed=not failures,
+            expected_scenario=data["expected_scenario"],
+            actual_scenario=intent.scenario_id,
+            reason="; ".join(failures),
+        )
+
+    def _check_intent(self, intent: Any, data: dict[str, Any]) -> list[str]:
+        failures: list[str] = []
+        self._expect_equal(failures, "scenario_id", intent.scenario_id, data["expected_scenario"])
+        if "expected_min_confidence" in data and intent.confidence < data["expected_min_confidence"]:
+            failures.append(
+                f"confidence expected >= {data['expected_min_confidence']!r}, got {intent.confidence!r}"
+            )
+        for signal in data.get("expected_matched_signals_contains", []):
+            if signal not in intent.matched_signals:
+                failures.append(f"matched_signals missing {signal!r}")
+        for warning in data.get("expected_warnings_contains", []):
+            if warning not in intent.warnings:
+                failures.append(f"warnings missing {warning!r}")
         return failures
 
     def _expect_equal(self, failures: list[str], field_name: str, actual: Any, expected: Any) -> None:

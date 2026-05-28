@@ -77,6 +77,12 @@ Run golden cases:
 python -c "from pathlib import Path; from powerbanana.evals import GoldenCaseRunner; print(GoldenCaseRunner(Path('evals/golden_cases')).run_all())"
 ```
 
+Run planner golden cases:
+
+```powershell
+python -c "from pathlib import Path; from powerbanana.evals import PlannerGoldenCaseRunner; print(PlannerGoldenCaseRunner(Path('evals/planner_cases')).run_all())"
+```
+
 ## Extending Evaluation
 
 PowerBanana runs analysis results through an `EvaluationRunner`. You can register your own evaluator without changing the core agent:
@@ -150,7 +156,7 @@ Keep these project assets in Git:
 |---|---|
 | `powerbanana/` | Runtime source code. |
 | `tests/` | Automated tests for the CLI, Planner, Blackboard, DAG, and governance behavior. |
-| `evals/` | Synthetic golden cases, calibration cases, and fixtures. |
+| `evals/` | Synthetic planner cases, golden cases, calibration cases, and fixtures. |
 | `docs/` | GitHub Pages documentation. |
 
 Keep real user datasets and local run outputs out of Git. Use local-only directories such as `local_data/`, `private_data/`, `user_uploads/`, or `runs/`.

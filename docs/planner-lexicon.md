@@ -24,6 +24,28 @@ The lexicon is not just a keyword list. It combines scenario rules, phrase group
 | `unsupported_forecast` | `forecast`, `predict`, `预测`, `预估` | Recognized but not supported yet. |
 | `unknown` | No rule matched | Keeps confidence low and marks `unknown_scenario`. |
 
+## Planner Golden Cases
+
+Planner classification is protected by `evals/planner_cases/`. Each case is a JSON file with a user question and the expected planner intent:
+
+```json
+{
+  "case_id": "conversion_rate_basic",
+  "question": "Which channel has the highest conversion rate?",
+  "expected_scenario": "conversion_rate_analysis",
+  "expected_min_confidence": 0.8,
+  "expected_matched_signals_contains": ["conversion", "rate"]
+}
+```
+
+Run the suite:
+
+```powershell
+python -c "from pathlib import Path; from powerbanana.evals import PlannerGoldenCaseRunner; print(PlannerGoldenCaseRunner(Path('evals/planner_cases')).run_all())"
+```
+
+Add a planner golden case whenever a new user phrasing, synonym, unsupported capability, or ambiguity pattern is introduced.
+
 ## User Extension Format
 
 User vocabulary can be added through JSON overrides:

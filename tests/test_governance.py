@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from powerbanana.agent import PowerBananaAgent
-from powerbanana.evals import GoldenCaseRunner
+from powerbanana.evals import GoldenCaseRunner, PlannerGoldenCaseRunner
 from powerbanana.plan import PlanValidator, default_powerbanana_task_plan
 from powerbanana.planner import DeterministicDataFilePlanner
 
@@ -139,6 +139,13 @@ class PowerBananaGovernanceTests(unittest.TestCase):
         summary = GoldenCaseRunner(Path("evals/golden_cases")).run_all()
 
         self.assertGreaterEqual(summary.total, 1)
+        self.assertEqual(summary.failed, 0)
+        self.assertEqual(summary.passed, summary.total)
+
+    def test_planner_golden_case_runner_passes_default_cases(self):
+        summary = PlannerGoldenCaseRunner(Path("evals/planner_cases")).run_all()
+
+        self.assertGreaterEqual(summary.total, 10)
         self.assertEqual(summary.failed, 0)
         self.assertEqual(summary.passed, summary.total)
 

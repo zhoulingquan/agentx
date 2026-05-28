@@ -1,6 +1,26 @@
 # Regression and Calibration
 
-PowerBanana uses two test suites with different purposes.
+PowerBanana uses three test suites with different purposes.
+
+## Planner Golden Cases
+
+Planner golden cases test deterministic scenario classification before the DAG runs. They protect the governed lexicon from accidental drift as synonyms and unsupported capability patterns are added.
+
+Run:
+
+```powershell
+python -c "from pathlib import Path; from powerbanana.evals import PlannerGoldenCaseRunner; print(PlannerGoldenCaseRunner(Path('evals/planner_cases')).run_all())"
+```
+
+Current coverage:
+
+| Case Type | Purpose |
+|---|---|
+| Conversion-rate phrasing | English and Chinese synonyms route to `conversion_rate_analysis` |
+| Ambiguous performance phrasing | Missing metric routes to `ambiguous_metric` |
+| Unsupported revenue phrasing | Revenue-like requests route to `unsupported_revenue` |
+| Unsupported forecast phrasing | Forecast and prediction requests route to `unsupported_forecast` |
+| Unknown phrasing | Unmatched questions route to `unknown` |
 
 ## Golden Cases
 

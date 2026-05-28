@@ -1,0 +1,8 @@
+{
+  "case_id": "unsupported_revenue",
+  "question": "Which channel has the highest revenue?",
+  "expected_scenario": "unsupported_revenue",
+  "expected_min_confidence": 0.85,
+  "expected_matched_signals_contains": ["revenue"],
+  "expected_warnings_contains": ["unsupported_capability"]
+}

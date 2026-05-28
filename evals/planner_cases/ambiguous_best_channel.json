@@ -1,0 +1,7 @@
+{
+  "case_id": "ambiguous_best_channel",
+  "question": "Which channel performs best?",
+  "expected_scenario": "ambiguous_metric",
+  "expected_min_confidence": 0.7,
+  "expected_warnings_contains": ["missing_metric"]
+}

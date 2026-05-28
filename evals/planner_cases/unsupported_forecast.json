@@ -1,0 +1,8 @@
+{
+  "case_id": "unsupported_forecast",
+  "question": "Can you forecast conversion rate next month?",
+  "expected_scenario": "unsupported_forecast",
+  "expected_min_confidence": 0.9,
+  "expected_matched_signals_contains": ["forecast"],
+  "expected_warnings_contains": ["unsupported_capability"]
+}

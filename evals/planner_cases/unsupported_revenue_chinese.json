@@ -1,0 +1,8 @@
+{
+  "case_id": "unsupported_revenue_chinese",
+  "question": "哪个渠道营收最高？",
+  "expected_scenario": "unsupported_revenue",
+  "expected_min_confidence": 0.85,
+  "expected_matched_signals_contains": ["营收"],
+  "expected_warnings_contains": ["unsupported_capability"]
+}

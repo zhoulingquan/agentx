@@ -1,0 +1,8 @@
+{
+  "case_id": "unsupported_forecast_chinese",
+  "question": "请预测下个月销售额。",
+  "expected_scenario": "unsupported_forecast",
+  "expected_min_confidence": 0.9,
+  "expected_matched_signals_contains": ["预测"],
+  "expected_warnings_contains": ["unsupported_capability"]
+}

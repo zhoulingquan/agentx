@@ -1,0 +1,7 @@
+{
+  "case_id": "unknown_general_question",
+  "question": "Can you summarize this file?",
+  "expected_scenario": "unknown",
+  "expected_min_confidence": 0.2,
+  "expected_warnings_contains": ["unknown_scenario"]
+}

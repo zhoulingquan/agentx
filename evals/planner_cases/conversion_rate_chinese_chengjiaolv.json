@@ -1,0 +1,7 @@
+{
+  "case_id": "conversion_rate_chinese_chengjiaolv",
+  "question": "哪个渠道成交率最高？",
+  "expected_scenario": "conversion_rate_analysis",
+  "expected_min_confidence": 0.8,
+  "expected_matched_signals_contains": ["成交率"]
+}
