@@ -1,0 +1,53 @@
+{
+  "case_id": "missing_evidence_should_block",
+  "expected_gate_action": "block",
+  "expected_verdict": "fail",
+  "expected_failure_reasons_contains": ["missing_evidence_ref"],
+  "expected_blocking_issues_contains": ["missing_evidence_ref"],
+  "context": {
+    "task_id": "cal_003",
+    "rows": [
+      {"channel": "email", "visits": "100", "orders": "20"},
+      {"channel": "ads", "visits": "200", "orders": "30"}
+    ],
+    "dataset_snapshot": {
+      "dataset_id": "calibration_missing_evidence",
+      "dataset_version": "upload_v1",
+      "file_hash": "sha256:calibration",
+      "row_count": 2,
+      "columns": ["channel", "visits", "orders"],
+      "missing_counts": {"channel": 0, "visits": 0, "orders": 0}
+    },
+    "analysis_result": {
+      "metric": "conversion_rate",
+      "group_by": "channel",
+      "top_value": "email",
+      "value": 0.2,
+      "evidence_ref": "",
+      "values": {"email": 0.2, "ads": 0.15}
+    },
+    "security_findings": [],
+    "step_trace": [
+      {
+        "step_id": "s1",
+        "action_type": "skill",
+        "skill_id": "compute_grouped_metric",
+        "status": "succeeded",
+        "input_refs": ["dataset://cal_003/upload_v1"],
+        "output_ref": "blackboard://cal_003/artifacts/metric_result_s1_v1",
+        "expected_output_schema": "MetricResult"
+      },
+      {
+        "step_id": "s2",
+        "action_type": "skill",
+        "skill_id": "rank_metric_values",
+        "status": "succeeded",
+        "input_refs": ["blackboard://cal_003/artifacts/metric_result_s1_v1"],
+        "output_ref": "blackboard://cal_003/artifacts/ranked_metric_result_s2_v1",
+        "expected_output_schema": "RankedMetricResult"
+      }
+    ],
+    "target_type": "analysis_result",
+    "target_ref": "blackboard://cal_003/artifacts/analysis_result_v1"
+  }
+}

@@ -163,6 +163,17 @@ class EvaluationResult:
     verdict: str
     failure_reasons: list[str]
     scores: dict[str, float]
+    evaluation_id: str = "eval_001"
+    evaluator_version: str = "legacy"
+    target_type: str = "analysis_result"
+    target_ref: str = ""
+    status: str = "completed"
+    blocking_issues: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    gate_action: str = "pass"
+    evidence_refs: list[str] = field(default_factory=list)
+    evaluator_results: list[dict[str, Any]] = field(default_factory=list)
+    snapshot_ref: str = ""
 
 
 @dataclass(frozen=True)

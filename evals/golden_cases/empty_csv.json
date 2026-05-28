@@ -1,0 +1,17 @@
+{
+  "case_id": "empty_csv",
+  "dataset": "empty_csv.csv",
+  "question": "Which channel has the highest conversion rate?",
+  "expected_status": "partial",
+  "expected_answer": "Cannot compute conversion_rate because required fields are missing: channel, orders, visits.",
+  "expected_evaluation_verdict": "partial",
+  "expected_gate_action": "return_partial",
+  "expected_failure_reasons": ["missing_required_fields"],
+  "expected_blocking_issues": [],
+  "expected_security_findings_count": 0,
+  "expected_human_gates_count": 0,
+  "expected_step_skills": [],
+  "expected_limitations_contains": ["Required fields for conversion_rate"],
+  "expected_row_count": 0,
+  "expected_columns": []
+}

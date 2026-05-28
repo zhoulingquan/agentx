@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .blackboard import TaskBlackboard
 from .dag import TaskDagExecutor
+from .evaluation import EvaluationRunner
 from .llm import default_llm_settings
 from .models import PowerBananaReport
 from .plan import PlanValidator, default_powerbanana_task_plan
@@ -19,9 +20,10 @@ class PowerBananaAgent:
         data_profile_agent: DataProfileAgent | None = None,
         data_analysis_agent: DataAnalysisAgent | None = None,
         report_agent: ReportAgent | None = None,
+        evaluation_runner: EvaluationRunner | None = None,
     ) -> None:
         self.data_profile_agent = data_profile_agent or DataProfileAgent()
-        self.data_analysis_agent = data_analysis_agent or DataAnalysisAgent()
+        self.data_analysis_agent = data_analysis_agent or DataAnalysisAgent(evaluation_runner=evaluation_runner)
         self.report_agent = report_agent or ReportAgent()
 
     def answer(self, file_path: str | Path, question: str) -> PowerBananaReport:

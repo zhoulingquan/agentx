@@ -1,0 +1,17 @@
+{
+  "case_id": "zero_visits_no_valid_denominator",
+  "dataset": "zero_visits_no_valid_denominator.csv",
+  "question": "Which channel has the highest conversion rate?",
+  "expected_status": "partial",
+  "expected_answer": "Cannot compute conversion_rate because no group has visits greater than zero.",
+  "expected_evaluation_verdict": "partial",
+  "expected_gate_action": "return_partial",
+  "expected_failure_reasons": ["no_valid_denominator"],
+  "expected_blocking_issues": [],
+  "expected_security_findings_count": 0,
+  "expected_human_gates_count": 0,
+  "expected_step_skills": [],
+  "expected_limitations_contains": ["At least one row needs a numeric visits value greater than zero."],
+  "expected_row_count": 2,
+  "expected_columns": ["channel", "visits", "orders"]
+}

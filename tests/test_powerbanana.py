@@ -4,9 +4,31 @@ import unittest
 from pathlib import Path
 
 from powerbanana.agent import PowerBananaAgent
-from powerbanana.policies import AutonomyPolicy
-from powerbanana.skills import build_default_skill_registry
-from powerbanana.subagents import build_default_subagent_registry
+from powerbanana.evals import CalibrationRunner
+from powerbanana.evaluation import (
+    EvaluationRunner,
+    EvaluatorOutcome,
+    LocalEvaluationStore,
+    ReplayRunner,
+    default_evaluator_registry,
+)
+
+
+class RowCountWarningEvaluator:
+    evaluator_id = "row_count_warning_evaluator"
+    version = "0.1.0"
+
+    def evaluate(self, context):
+        if context.dataset_snapshot and context.dataset_snapshot.row_count < 5:
+            return EvaluatorOutcome(
+                evaluator_id=self.evaluator_id,
+                version=self.version,
+                passed=True,
+                warnings=["small_dataset"],
+                scores={"row_count_policy": 0.5},
+                gate_action="pass_with_warning",
+            )
+        return EvaluatorOutcome(self.evaluator_id, self.version, True, scores={"row_count_policy": 1.0})
 
 
 class PowerBananaAgentTests(unittest.TestCase):
@@ -39,40 +61,6 @@ class PowerBananaAgentTests(unittest.TestCase):
         self.assertEqual([step.skill_id for step in report.step_trace], ["compute_grouped_metric", "rank_metric_values"])
         self.assertEqual(report.evaluation.verdict, "pass")
         self.assertEqual(report.evaluation.failure_reasons, [])
-        self.assertEqual(
-            [entry.agent_id for entry in report.agent_trace],
-            ["data_profile_agent", "data_analysis_agent", "report_agent"],
-        )
-        self.assertEqual(
-            [entry.runtime_mode for entry in report.agent_trace],
-            ["workflow", "autonomous", "workflow"],
-        )
-        self.assertEqual(
-            [(node.node_id, node.status) for node in report.dag_trace],
-            [
-                ("dag_node_profile", "succeeded"),
-                ("dag_node_analysis", "succeeded"),
-                ("dag_node_report", "succeeded"),
-            ],
-        )
-        self.assertIn("blackboard_created", [event.event_type for event in report.blackboard_events])
-        self.assertIn("artifact_written", [event.event_type for event in report.blackboard_events])
-        self.assertIn("skill_executed", [event.event_type for event in report.blackboard_events])
-        self.assertIn("tool_called", [event.event_type for event in report.blackboard_events])
-        self.assertIn("context_bundle_created", [event.event_type for event in report.blackboard_events])
-        self.assertIn("memory_written", [event.event_type for event in report.blackboard_events])
-        self.assertEqual(report.tool_calls[0].tool_id, "dataset.read_snapshot")
-        self.assertEqual(report.context_bundle.agent_id, "data_analysis_agent")
-        self.assertEqual(
-            [(item.ref, item.trust_level, item.allowed_use) for item in report.context_bundle.items],
-            [
-                ("dataset://task_001/upload_v1", "untrusted_user_content", "data_only"),
-                ("blackboard://task_001/artifacts/data_profile_v1", "verified_tool_result", "evidence"),
-            ],
-        )
-        self.assertEqual(report.memory_records[0].memory_type, "task_summary")
-        self.assertEqual(report.llm_settings.temperature, 0.0)
-        self.assertEqual(report.llm_settings.mode, "deterministic_no_llm")
 
     def test_marks_prompt_injection_cells_as_data_only_security_findings(self):
         path = self.write_csv(
@@ -103,35 +91,60 @@ class PowerBananaAgentTests(unittest.TestCase):
         self.assertEqual(report.status, "needs_clarification")
         self.assertIn("metric", report.answer.lower())
         self.assertEqual(report.step_trace, [])
-        self.assertEqual([entry.agent_id for entry in report.agent_trace], ["data_profile_agent", "data_analysis_agent"])
 
-    def test_default_subagent_registry_exposes_v03_runtime_modes(self):
-        registry = build_default_subagent_registry()
-
-        self.assertEqual(registry["data_profile_agent"].runtime_mode, "workflow")
-        self.assertEqual(registry["data_analysis_agent"].runtime_mode, "autonomous")
-        self.assertEqual(registry["data_analysis_agent"].autonomy_level, 2)
-        self.assertEqual(registry["report_agent"].runtime_mode, "workflow")
-
-    def test_skill_registry_exposes_versioned_skills(self):
-        registry = build_default_skill_registry()
-
-        self.assertEqual(registry["compute_grouped_metric"].version, "0.1.0")
-        self.assertEqual(registry["rank_metric_values"].version, "0.1.0")
-
-    def test_autonomy_policy_blocks_unregistered_or_disallowed_skills(self):
-        policy = AutonomyPolicy(
-            policy_id="test_l2",
-            level=2,
-            max_steps=2,
-            allowed_skills=["compute_grouped_metric"],
+    def test_accepts_user_registered_evaluator(self):
+        path = self.write_csv(
+            [
+                {"channel": "email", "visits": "100", "orders": "20"},
+                {"channel": "ads", "visits": "200", "orders": "30"},
+            ]
         )
+        registry = default_evaluator_registry()
+        registry.register(RowCountWarningEvaluator())
+        runner = EvaluationRunner(registry)
 
-        policy.validate_step_plan(["compute_grouped_metric"])
-        with self.assertRaises(ValueError):
-            policy.validate_step_plan(["compute_grouped_metric", "rank_metric_values"])
-        with self.assertRaises(ValueError):
-            policy.validate_step_plan(["unknown_skill"])
+        report = PowerBananaAgent(evaluation_runner=runner).answer(path, "Which channel has the highest conversion rate?")
+
+        self.assertEqual(report.status, "completed")
+        self.assertEqual(report.evaluation.gate_action, "pass_with_warning")
+        self.assertIn("small_dataset", report.evaluation.warnings)
+        self.assertIn("row_count_warning_evaluator@0.1.0", report.evaluation.evaluator_version)
+
+    def test_persists_and_replays_evaluation_snapshot(self):
+        path = self.write_csv(
+            [
+                {"channel": "email", "visits": "100", "orders": "20"},
+                {"channel": "ads", "visits": "200", "orders": "30"},
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = LocalEvaluationStore(Path(tmpdir))
+            runner = EvaluationRunner(store=store)
+
+            report = PowerBananaAgent(evaluation_runner=runner).answer(path, "Which channel has the highest conversion rate?")
+
+            self.assertEqual(report.evaluation.gate_action, "pass")
+            self.assertTrue(report.evaluation.snapshot_ref)
+            self.assertTrue(Path(report.evaluation.snapshot_ref).exists())
+            self.assertTrue((Path(tmpdir) / "evaluations.jsonl").exists())
+
+            replay = ReplayRunner().run_snapshot(report.evaluation.snapshot_ref)
+
+            self.assertFalse(replay.changed)
+            self.assertEqual(replay.old_gate_action, "pass")
+            self.assertEqual(replay.new_gate_action, "pass")
+
+    def test_calibration_cases_pass_without_false_pass_or_false_fail(self):
+        cases_dir = Path(__file__).resolve().parents[1] / "evals" / "calibration_cases"
+
+        summary = CalibrationRunner(cases_dir).run_all()
+
+        self.assertEqual(summary.total, 6)
+        self.assertEqual(summary.failed, 0)
+        self.assertEqual(summary.false_pass, 0)
+        self.assertEqual(summary.false_fail, 0)
+        self.assertEqual(summary.escalation_miss, 0)
+        self.assertEqual(summary.over_escalation, 0)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,16 @@
+{
+  "case_id": "ambiguous_performance_question",
+  "dataset": "ambiguous_performance_question.csv",
+  "question": "Which channel performs best?",
+  "expected_status": "needs_clarification",
+  "expected_answer": "Please specify the metric to optimize, such as conversion_rate, revenue, orders, or visits.",
+  "expected_evaluation_verdict": "needs_clarification",
+  "expected_gate_action": "needs_clarification",
+  "expected_failure_reasons": ["ambiguous_metric"],
+  "expected_blocking_issues": [],
+  "expected_security_findings_count": 0,
+  "expected_human_gates_count": 1,
+  "expected_step_skills": [],
+  "expected_row_count": 2,
+  "expected_columns": ["channel", "visits", "orders", "revenue"]
+}

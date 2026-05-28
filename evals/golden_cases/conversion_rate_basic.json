@@ -1,0 +1,22 @@
+{
+  "case_id": "conversion_rate_basic",
+  "dataset": "conversion_rate_basic.csv",
+  "question": "Which channel has the highest conversion rate?",
+  "expected_status": "completed",
+  "expected_answer": "email has the highest conversion_rate at 20.00%.",
+  "expected_top_value": "email",
+  "expected_evaluation_verdict": "pass",
+  "expected_gate_action": "pass",
+  "expected_failure_reasons": [],
+  "expected_blocking_issues": [],
+  "expected_security_findings_count": 0,
+  "expected_human_gates_count": 0,
+  "expected_step_skills": ["compute_grouped_metric", "rank_metric_values"],
+  "expected_row_count": 3,
+  "expected_columns": ["channel", "visits", "orders"],
+  "expected_missing_counts": {
+    "channel": 0,
+    "visits": 0,
+    "orders": 0
+  }
+}

@@ -75,6 +75,71 @@ Run golden cases:
 python -c "from pathlib import Path; from powerbanana.evals import GoldenCaseRunner; print(GoldenCaseRunner(Path('evals/golden_cases')).run_all())"
 ```
 
+## Extending Evaluation
+
+PowerBanana runs analysis results through an `EvaluationRunner`. You can register your own evaluator without changing the core agent:
+
+```python
+from pathlib import Path
+
+from powerbanana.agent import PowerBananaAgent
+from powerbanana.evaluation import EvaluationRunner, EvaluatorOutcome, default_evaluator_registry
+
+
+class RowCountWarningEvaluator:
+    evaluator_id = "row_count_warning_evaluator"
+    version = "0.1.0"
+
+    def evaluate(self, context):
+        if context.dataset_snapshot and context.dataset_snapshot.row_count < 5:
+            return EvaluatorOutcome(
+                evaluator_id=self.evaluator_id,
+                version=self.version,
+                passed=True,
+                warnings=["small_dataset"],
+                scores={"row_count_policy": 0.5},
+                gate_action="pass_with_warning",
+            )
+        return EvaluatorOutcome(self.evaluator_id, self.version, True)
+
+
+registry = default_evaluator_registry()
+registry.register(RowCountWarningEvaluator())
+runner = EvaluationRunner(registry)
+
+report = PowerBananaAgent(evaluation_runner=runner).answer(
+    Path("evals/golden_cases/conversion_rate_basic.csv"),
+    "Which channel has the highest conversion rate?",
+)
+```
+
+Persist evaluation records and replay snapshots locally:
+
+```python
+from pathlib import Path
+
+from powerbanana.agent import PowerBananaAgent
+from powerbanana.evaluation import EvaluationRunner, LocalEvaluationStore, ReplayRunner
+
+
+store = LocalEvaluationStore(Path("runs"))
+runner = EvaluationRunner(store=store)
+
+report = PowerBananaAgent(evaluation_runner=runner).answer(
+    Path("evals/golden_cases/conversion_rate_basic.csv"),
+    "Which channel has the highest conversion rate?",
+)
+
+replay = ReplayRunner().run_snapshot(report.evaluation.snapshot_ref)
+print(replay)
+```
+
+Run calibration cases:
+
+```powershell
+python -c "from pathlib import Path; from powerbanana.evals import CalibrationRunner; print(CalibrationRunner(Path('evals/calibration_cases')).run_all())"
+```
+
 ## Scope
 
 Supported in v0.1:
