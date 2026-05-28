@@ -21,8 +21,9 @@ The v0.1 runtime includes explicit sub-agents:
 
 The runtime now includes the first governance pieces from the v0.3 design:
 
+- `DeterministicDataFilePlanner` creates a candidate Task Plan before any DAG execution.
 - `TaskDagExecutor` schedules `data_profile_agent -> data_analysis_agent -> report_agent`.
-- `TaskPlan` and `PlanValidator` freeze the fixed data-analysis plan before execution.
+- `TaskPlan` and `PlanValidator` freeze the Planner candidate before execution.
 - `TaskBlackboard` records event log entries and structured Blackboard entries for artifacts, security findings, and evaluations.
 - `TaskBlackboard` tracks artifact versions for first-write consistency checks.
 - `SkillRegistry` exposes versioned skills such as `compute_grouped_metric@0.1.0` and `rank_metric_values@0.1.0`.

@@ -15,6 +15,7 @@ from .models import (
     HumanGateRecord,
     LLMSettings,
     MemoryRecord,
+    PlannerTrace,
     SecurityFinding,
     StepPlan,
     StepRecord,
@@ -28,6 +29,7 @@ class TaskBlackboard:
     task_id: str = "task_001"
     status: str = "created"
     task_plan: TaskPlan | None = None
+    planner_trace: PlannerTrace | None = None
     rows: list[dict[str, str]] = field(default_factory=list)
     question: str = ""
     dataset_snapshot: DatasetSnapshot | None = None
@@ -153,6 +155,20 @@ class TaskBlackboard:
             target_ref=target_ref,
             payload=evaluation,
             visibility_scope=["task", "evaluation"],
+            confidence=1.0,
+        )
+        return target_ref
+
+    def record_planner_trace(self, trace: PlannerTrace, actor_id: str = "planner") -> str:
+        self.planner_trace = trace
+        target_ref = f"blackboard://{self.task_id}/planner/{trace.candidate_plan_id}"
+        self.write_entry(
+            entry_type="planner_trace",
+            owner_agent_id=actor_id,
+            source_ref=f"planner://{trace.planner_id}",
+            target_ref=target_ref,
+            payload=trace,
+            visibility_scope=["task", "planning"],
             confidence=1.0,
         )
         return target_ref

@@ -9,7 +9,7 @@ Each entry includes:
 | Field | Purpose |
 |---|---|
 | `entry_id` | Stable per-task entry id such as `entry_0001` |
-| `entry_type` | Entry category, such as `artifact`, `security_finding`, or `evaluation` |
+| `entry_type` | Entry category, such as `planner_trace`, `artifact`, `security_finding`, or `evaluation` |
 | `owner_agent_id` | Agent or layer that owns the entry |
 | `source_ref` | Source of the entry, such as a row/column reference or evaluator id |
 | `target_ref` | Blackboard URI for the written fact |
@@ -23,6 +23,7 @@ Each entry includes:
 
 | Entry Type | Written By | Example Target |
 |---|---|---|
+| `planner_trace` | `planner` | `blackboard://task_001/planner/plan_powerbanana_v0_1` |
 | `artifact` | `data_profile_agent`, `data_analysis_agent` | `blackboard://task_001/artifacts/analysis_result_v1` |
 | `security_finding` | `data_profile_agent` | `blackboard://task_001/security_findings/security_finding_001` |
 | `evaluation` | `evaluation_layer` | `blackboard://task_001/artifacts/analysis_result_v1` |

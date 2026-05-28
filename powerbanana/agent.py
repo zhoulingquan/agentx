@@ -7,7 +7,8 @@ from .dag import TaskDagExecutor
 from .evaluation import EvaluationRunner
 from .llm import default_llm_settings
 from .models import PowerBananaReport
-from .plan import PlanValidator, default_powerbanana_task_plan
+from .plan import PlanValidator
+from .planner import DeterministicDataFilePlanner, Planner
 from .subagents import DataAnalysisAgent, DataProfileAgent, ReportAgent
 
 
@@ -21,15 +22,20 @@ class PowerBananaAgent:
         data_analysis_agent: DataAnalysisAgent | None = None,
         report_agent: ReportAgent | None = None,
         evaluation_runner: EvaluationRunner | None = None,
+        planner: Planner | None = None,
     ) -> None:
         self.data_profile_agent = data_profile_agent or DataProfileAgent()
         self.data_analysis_agent = data_analysis_agent or DataAnalysisAgent(evaluation_runner=evaluation_runner)
         self.report_agent = report_agent or ReportAgent()
+        self.planner = planner or DeterministicDataFilePlanner()
 
     def answer(self, file_path: str | Path, question: str) -> PowerBananaReport:
+        path = Path(file_path)
         blackboard = TaskBlackboard(question=question)
         blackboard.llm_settings = default_llm_settings()
-        blackboard.task_plan = PlanValidator().validate(default_powerbanana_task_plan())
+        planner_result = self.planner.plan(path, question)
+        blackboard.record_planner_trace(planner_result.trace)
+        blackboard.task_plan = PlanValidator().validate(planner_result.candidate_plan)
         task_dag = TaskDagExecutor(blackboard.task_plan.nodes)
         result = task_dag.run(
             blackboard,
@@ -38,7 +44,7 @@ class PowerBananaAgent:
                 "data_analysis_agent": self.data_analysis_agent.run,
                 "report_agent": self.report_agent.run,
             },
-            Path(file_path),
+            path,
             {"agent_name": self.name, "version": self.version},
         )
         if isinstance(result, PowerBananaReport):
@@ -64,6 +70,7 @@ class PowerBananaAgent:
             blackboard_events=blackboard.events,
             blackboard_entries=blackboard.entries,
             task_plan=blackboard.task_plan,
+            planner_trace=blackboard.planner_trace,
             step_plan=blackboard.step_plan,
             artifact_versions=blackboard.artifact_versions,
             human_gates=blackboard.human_gates,

@@ -39,6 +39,7 @@ Which channel has the highest conversion rate?
 | Area | Page |
 |---|---|
 | Running and deployment | [Deployment](deployment.md) |
+| Planner boundary | [Planner](planner.md) |
 | Task Blackboard | [Task Blackboard](blackboard.md) |
 | Golden cases and calibration | [Regression and Calibration](regression-and-calibration.md) |
 | Evaluation governance | [Evaluation Layer](evaluation-layer.md) |
@@ -53,6 +54,7 @@ Supported:
 - Simple XLSX files when `openpyxl` is installed.
 - Single-table conversion-rate analysis.
 - Deterministic no-LLM execution.
+- Deterministic candidate planning before DAG execution.
 - Task DAG trace, Blackboard events, Step trace, Evaluation result.
 - Golden cases, calibration cases, and replay snapshots.
 

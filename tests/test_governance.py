@@ -6,6 +6,7 @@ from pathlib import Path
 from powerbanana.agent import PowerBananaAgent
 from powerbanana.evals import GoldenCaseRunner
 from powerbanana.plan import PlanValidator, default_powerbanana_task_plan
+from powerbanana.planner import DeterministicDataFilePlanner
 
 
 class PowerBananaGovernanceTests(unittest.TestCase):
@@ -16,6 +17,18 @@ class PowerBananaGovernanceTests(unittest.TestCase):
             writer.writeheader()
             writer.writerows(rows)
         return Path(handle.name)
+
+    def test_planner_creates_candidate_plan_before_validation(self):
+        result = DeterministicDataFilePlanner().plan(
+            Path("sample.csv"),
+            "Which channel has the highest conversion rate?",
+        )
+
+        self.assertEqual(result.candidate_plan.status, "candidate")
+        self.assertEqual(result.trace.planner_id, "deterministic_data_file_planner")
+        self.assertEqual(result.trace.planner_mode, "deterministic_no_llm")
+        self.assertEqual(result.trace.status, "candidate_created")
+        self.assertEqual(result.trace.candidate_plan_id, result.candidate_plan.plan_id)
 
     def test_task_plan_is_validated_frozen_and_reported(self):
         plan = default_powerbanana_task_plan()
@@ -30,6 +43,8 @@ class PowerBananaGovernanceTests(unittest.TestCase):
         report = PowerBananaAgent().answer(path, "Which channel has the highest conversion rate?")
 
         self.assertEqual(report.task_plan.status, "frozen")
+        self.assertIsNotNone(report.planner_trace)
+        self.assertEqual(report.planner_trace.planner_id, "deterministic_data_file_planner")
         self.assertEqual(
             [node.agent_id for node in report.task_plan.nodes],
             ["data_profile_agent", "data_analysis_agent", "report_agent"],
@@ -76,6 +91,7 @@ class PowerBananaGovernanceTests(unittest.TestCase):
         report = PowerBananaAgent().answer(path, "Which channel has the highest conversion rate?")
 
         entry_types = [entry.entry_type for entry in report.blackboard_entries]
+        self.assertIn("planner_trace", entry_types)
         self.assertIn("artifact", entry_types)
         self.assertIn("security_finding", entry_types)
         self.assertIn("evaluation", entry_types)

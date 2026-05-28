@@ -112,6 +112,17 @@ class TaskPlan:
 
 
 @dataclass(frozen=True)
+class PlannerTrace:
+    planner_id: str
+    planner_mode: str
+    status: str
+    scenario_id: str
+    candidate_plan_id: str
+    rationale: str
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class HumanGateRecord:
     gate_id: str
     gate_type: str
@@ -205,6 +216,7 @@ class PowerBananaReport:
     evaluation: EvaluationResult
     blackboard_entries: list[BlackboardEntry] = field(default_factory=list)
     task_plan: TaskPlan | None = None
+    planner_trace: PlannerTrace | None = None
     step_plan: StepPlan | None = None
     artifact_versions: dict[str, int] = field(default_factory=dict)
     human_gates: list[HumanGateRecord] = field(default_factory=list)
