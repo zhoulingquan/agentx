@@ -42,6 +42,23 @@ class AgentTraceEntry:
 
 
 @dataclass(frozen=True)
+class DagNodeTrace:
+    node_id: str
+    agent_id: str
+    status: str
+    depends_on: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class BlackboardEvent:
+    event_id: str
+    event_type: str
+    actor_id: str
+    target_ref: str
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class AnalysisResult:
     metric: str
     group_by: str
@@ -67,6 +84,8 @@ class PowerBananaReport:
     dataset_snapshot: DatasetSnapshot
     security_findings: list[SecurityFinding]
     agent_trace: list[AgentTraceEntry]
+    dag_trace: list[DagNodeTrace]
+    blackboard_events: list[BlackboardEvent]
     step_trace: list[StepRecord]
     evaluation: EvaluationResult
     analysis_result: AnalysisResult | None = None

@@ -1,8 +1,45 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
+from typing import Callable, Any
 
 from .models import AnalysisResult, DatasetSnapshot, EvaluationResult, StepRecord
+
+
+@dataclass(frozen=True)
+class SkillDefinition:
+    skill_id: str
+    version: str
+    input_schema: str
+    output_schema: str
+    handler: Callable[..., Any]
+
+
+class SkillRegistry(dict[str, SkillDefinition]):
+    def execute(self, skill_id: str, *args: Any, **kwargs: Any) -> Any:
+        return self[skill_id].handler(*args, **kwargs)
+
+
+def build_default_skill_registry() -> SkillRegistry:
+    return SkillRegistry(
+        {
+            "compute_grouped_metric": SkillDefinition(
+                skill_id="compute_grouped_metric",
+                version="0.1.0",
+                input_schema="Rows",
+                output_schema="MetricResult",
+                handler=compute_grouped_conversion_rate,
+            ),
+            "rank_metric_values": SkillDefinition(
+                skill_id="rank_metric_values",
+                version="0.1.0",
+                input_schema="MetricResult",
+                output_schema="RankedMetricResult",
+                handler=rank_metric_values,
+            ),
+        }
+    )
 
 
 def to_float(value: object) -> float | None:

@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 
 from powerbanana.agent import PowerBananaAgent
+from powerbanana.policies import AutonomyPolicy
+from powerbanana.skills import build_default_skill_registry
 from powerbanana.subagents import build_default_subagent_registry
 
 
@@ -45,6 +47,17 @@ class PowerBananaAgentTests(unittest.TestCase):
             [entry.runtime_mode for entry in report.agent_trace],
             ["workflow", "autonomous", "workflow"],
         )
+        self.assertEqual(
+            [(node.node_id, node.status) for node in report.dag_trace],
+            [
+                ("dag_node_profile", "succeeded"),
+                ("dag_node_analysis", "succeeded"),
+                ("dag_node_report", "succeeded"),
+            ],
+        )
+        self.assertIn("blackboard_created", [event.event_type for event in report.blackboard_events])
+        self.assertIn("artifact_written", [event.event_type for event in report.blackboard_events])
+        self.assertIn("skill_executed", [event.event_type for event in report.blackboard_events])
 
     def test_marks_prompt_injection_cells_as_data_only_security_findings(self):
         path = self.write_csv(
@@ -84,6 +97,26 @@ class PowerBananaAgentTests(unittest.TestCase):
         self.assertEqual(registry["data_analysis_agent"].runtime_mode, "autonomous")
         self.assertEqual(registry["data_analysis_agent"].autonomy_level, 2)
         self.assertEqual(registry["report_agent"].runtime_mode, "workflow")
+
+    def test_skill_registry_exposes_versioned_skills(self):
+        registry = build_default_skill_registry()
+
+        self.assertEqual(registry["compute_grouped_metric"].version, "0.1.0")
+        self.assertEqual(registry["rank_metric_values"].version, "0.1.0")
+
+    def test_autonomy_policy_blocks_unregistered_or_disallowed_skills(self):
+        policy = AutonomyPolicy(
+            policy_id="test_l2",
+            level=2,
+            max_steps=2,
+            allowed_skills=["compute_grouped_metric"],
+        )
+
+        policy.validate_step_plan(["compute_grouped_metric"])
+        with self.assertRaises(ValueError):
+            policy.validate_step_plan(["compute_grouped_metric", "rank_metric_values"])
+        with self.assertRaises(ValueError):
+            policy.validate_step_plan(["unknown_skill"])
 
 
 if __name__ == "__main__":

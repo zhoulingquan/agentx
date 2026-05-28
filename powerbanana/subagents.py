@@ -8,7 +8,8 @@ from pathlib import Path
 
 from .blackboard import TaskBlackboard
 from .models import AnalysisResult, DatasetSnapshot, EvaluationResult, PowerBananaReport, SecurityFinding
-from .skills import compute_grouped_conversion_rate, conversion_rate_step_trace, evaluate_metric, rank_metric_values
+from .policies import AutonomyPolicy, default_data_analysis_policy
+from .skills import SkillRegistry, build_default_skill_registry, conversion_rate_step_trace, evaluate_metric
 
 
 PROMPT_INJECTION_PATTERNS = (
@@ -34,12 +35,12 @@ class DataProfileAgent:
         blackboard.rows = rows
         blackboard.dataset_snapshot = self._snapshot(path, rows)
         blackboard.security_findings = self._scan_security(rows)
-        blackboard.artifacts["data_profile_v1"] = blackboard.dataset_snapshot
+        output_ref = blackboard.write_artifact("data_profile_v1", blackboard.dataset_snapshot, self.profile.agent_id)
         blackboard.record_agent(
             self.profile.agent_id,
             self.profile.runtime_mode,
             "succeeded",
-            "blackboard://task_001/artifacts/data_profile_v1",
+            output_ref,
         )
 
     def _load_rows(self, path: Path) -> list[dict[str, str]]:
@@ -110,6 +111,10 @@ class DataProfileAgent:
 class DataAnalysisAgent:
     profile = SubAgentProfile("data_analysis_agent", "autonomous", "data_analyst", autonomy_level=2)
 
+    def __init__(self, skill_registry: SkillRegistry | None = None, autonomy_policy: AutonomyPolicy | None = None) -> None:
+        self.skill_registry = skill_registry or build_default_skill_registry()
+        self.autonomy_policy = autonomy_policy or default_data_analysis_policy()
+
     def run(self, blackboard: TaskBlackboard) -> None:
         question = blackboard.question
         if self._is_ambiguous_performance_question(question):
@@ -140,7 +145,10 @@ class DataAnalysisAgent:
             blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "partial", "blackboard://task_001/evaluations/missing_required_fields")
             return
 
-        rates, skipped_rows = compute_grouped_conversion_rate(blackboard.rows)
+        step_plan = ["compute_grouped_metric", "rank_metric_values"]
+        self.autonomy_policy.validate_step_plan(step_plan)
+        rates, skipped_rows = self.skill_registry.execute("compute_grouped_metric", blackboard.rows)
+        blackboard.append_event("skill_executed", self.profile.agent_id, "skill://compute_grouped_metric@0.1.0", {"step_id": "s1"})
         if not rates:
             blackboard.status = "partial"
             blackboard.answer = "Cannot compute conversion_rate because no group has visits greater than zero."
@@ -149,7 +157,8 @@ class DataAnalysisAgent:
             blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "partial", "blackboard://task_001/evaluations/no_valid_denominator")
             return
 
-        top_value, value = rank_metric_values(rates)
+        top_value, value = self.skill_registry.execute("rank_metric_values", rates)
+        blackboard.append_event("skill_executed", self.profile.agent_id, "skill://rank_metric_values@0.1.0", {"step_id": "s2"})
         analysis = AnalysisResult(
             metric="conversion_rate",
             group_by="channel",
@@ -165,8 +174,8 @@ class DataAnalysisAgent:
         blackboard.status = "completed" if blackboard.evaluation.verdict == "pass" else "partial"
         if skipped_rows:
             blackboard.limitations.append(f"Skipped {skipped_rows} rows with missing or nonnumeric channel, visits, or orders.")
-        blackboard.artifacts["analysis_result_v1"] = analysis
-        blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, blackboard.status, "blackboard://task_001/artifacts/analysis_result_v1")
+        output_ref = blackboard.write_artifact("analysis_result_v1", analysis, self.profile.agent_id)
+        blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, blackboard.status, output_ref)
 
     def _require_snapshot(self, blackboard: TaskBlackboard) -> DatasetSnapshot:
         if blackboard.dataset_snapshot is None:
@@ -199,6 +208,12 @@ class ReportAgent:
             dataset_snapshot=blackboard.dataset_snapshot,
             security_findings=blackboard.security_findings,
             agent_trace=blackboard.agent_trace,
+            dag_trace=[
+                node
+                for node in blackboard.dag_trace
+                if node.status != "running"
+            ],
+            blackboard_events=blackboard.events,
             step_trace=blackboard.step_trace,
             evaluation=blackboard.evaluation,
             analysis_result=blackboard.analysis_result,

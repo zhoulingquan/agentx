@@ -19,6 +19,13 @@ The v0.1 runtime includes explicit sub-agents:
 | `data_analysis_agent` | `autonomous` L2 | Execute the controlled Step Plan through skill-like functions. |
 | `report_agent` | `workflow` | Run final consistency checks and produce the structured report. |
 
+The runtime now includes the first governance pieces from the v0.3 design:
+
+- `TaskDagExecutor` schedules `data_profile_agent -> data_analysis_agent -> report_agent`.
+- `TaskBlackboard` records event log entries for blackboard creation, DAG transitions, artifact writes, agent completion, and skill execution.
+- `SkillRegistry` exposes versioned skills such as `compute_grouped_metric@0.1.0` and `rank_metric_values@0.1.0`.
+- `AutonomyPolicy` enforces the L2 analysis agent's allowed skills and maximum step count.
+
 PowerBanana v0.1 intentionally supports a small first path: answering which channel has the highest conversion rate from `channel`, `visits`, and `orders` columns.
 
 ## Run
