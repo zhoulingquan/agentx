@@ -32,7 +32,7 @@ The layer now evaluates two targets:
 - `unsupported_*` scenarios do not carry `unsupported_capability`.
 - `ambiguous_metric` does not carry `missing_metric`.
 
-Planner evaluation is recorded separately as `planner_evaluation`, so final answer evaluation remains focused on the analysis result.
+Planner evaluation is recorded separately as `planner_evaluation`, so final answer evaluation remains focused on the analysis result. If planner evaluation returns `block`, PowerBanana returns a blocked report immediately and does not validate the candidate plan, load the dataset, or run DAG nodes.
 
 ## Gate Actions
 

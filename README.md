@@ -23,7 +23,7 @@ The runtime now includes the first governance pieces from the v0.3 design:
 
 - `DeterministicDataFilePlanner` creates a candidate Task Plan before any DAG execution.
 - `PlannerClassifier` maps user questions to known scenarios with the user-editable `config/planner_lexicon.csv`.
-- `PlannerIntentEvaluator` checks Planner intent consistency before the frozen plan is executed.
+- `PlannerIntentEvaluator` checks Planner intent consistency and blocks DAG execution when planning is unsafe.
 - `TaskDagExecutor` schedules `data_profile_agent -> data_analysis_agent -> report_agent`.
 - `TaskPlan` and `PlanValidator` freeze the Planner candidate before execution.
 - `TaskBlackboard` records event log entries and structured Blackboard entries for artifacts, security findings, and evaluations.

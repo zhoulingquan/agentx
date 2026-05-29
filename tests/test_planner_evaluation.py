@@ -1,9 +1,35 @@
 import unittest
 
+from powerbanana.agent import PowerBananaAgent
 from powerbanana.blackboard import TaskBlackboard
 from powerbanana.evaluation import EvaluationRunner
 from powerbanana.models import PlannerIntent, PlannerTrace
+from powerbanana.plan import default_powerbanana_task_plan
 from powerbanana.planner import DeterministicDataFilePlanner
+from powerbanana.planner import PlannerResult
+
+
+class MissingIntentPlanner:
+    planner_id = "missing_intent_planner"
+    planner_mode = "deterministic_no_llm"
+
+    def plan(self, file_path, question):
+        return PlannerResult(
+            candidate_plan=default_powerbanana_task_plan(),
+            trace=PlannerTrace(
+                planner_id=self.planner_id,
+                planner_mode=self.planner_mode,
+                status="candidate_created",
+                scenario_id="conversion_rate_analysis",
+                candidate_plan_id="plan_test_missing_intent",
+                rationale="test blocked planner trace",
+            ),
+        )
+
+
+class ExplodingDataProfileAgent:
+    def run(self, blackboard, path):
+        raise AssertionError("DAG should not run when planner evaluation blocks.")
 
 
 class PlannerEvaluationTests(unittest.TestCase):
@@ -63,6 +89,21 @@ class PlannerEvaluationTests(unittest.TestCase):
 
         self.assertEqual(result.gate_action, "block")
         self.assertIn("missing_unsupported_warning", result.failure_reasons)
+
+    def test_agent_returns_blocked_report_without_running_dag_when_planner_gate_blocks(self):
+        report = PowerBananaAgent(
+            data_profile_agent=ExplodingDataProfileAgent(),
+            planner=MissingIntentPlanner(),
+        ).answer("sample.csv", "Which channel has the highest conversion rate?")
+
+        self.assertEqual(report.status, "blocked")
+        self.assertIsNone(report.task_plan)
+        self.assertIsNone(report.dataset_snapshot)
+        self.assertEqual(report.dag_trace, [])
+        self.assertEqual(report.agent_trace, [])
+        self.assertEqual(report.planner_evaluation.gate_action, "block")
+        self.assertEqual(report.evaluation.target_type, "planner_trace")
+        self.assertIn("planner_blocked", [event.event_type for event in report.blackboard_events])
 
 
 if __name__ == "__main__":

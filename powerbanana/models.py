@@ -217,7 +217,7 @@ class PowerBananaReport:
     version: str
     status: str
     answer: str
-    dataset_snapshot: DatasetSnapshot
+    dataset_snapshot: DatasetSnapshot | None
     security_findings: list[SecurityFinding]
     agent_trace: list[AgentTraceEntry]
     dag_trace: list[DagNodeTrace]
