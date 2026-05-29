@@ -12,8 +12,8 @@ The current implementation is deterministic and does not call an LLM. It classif
 | Candidate planning | `DeterministicDataFilePlanner` | `PlannerResult` | Produces a candidate `TaskPlan` plus `PlannerTrace`. |
 | Planner evaluation | `PlannerIntentEvaluator` | `planner_evaluation` | Checks intent consistency, confidence, and required warnings. |
 | Planner gate | `PowerBananaAgent` | `blocked` report or continued execution | Blocks before validation and DAG execution when planner evaluation returns `block`. |
-| Validation | `PlanValidator` | Frozen `TaskPlan` | Checks known agents, runtime modes, duplicate node ids, and dependencies. |
-| Scheduling | `TaskDagExecutor` | DAG trace | Executes only the frozen plan. |
+| Validation | `PlanValidator` | Frozen `TaskPlan` | Rejects malformed plans before execution. |
+| Scheduling | `TaskDagExecutor.from_plan` | DAG trace | Builds executors only from frozen plans. |
 | Reporting | `ReportAgent` | `PowerBananaReport` | Includes both `task_plan` and `planner_trace`. |
 
 ## Current Planner
@@ -43,3 +43,19 @@ The next planner improvements should keep the same contract:
 Future planner variants can select scenarios, add plan warnings, or call an LLM. They should still avoid direct tool execution and should keep all planner decisions visible through the Blackboard and final report.
 
 See [Planner Lexicon](planner-lexicon.md) for the governed vocabulary and expansion flow.
+
+## Plan Validation
+
+`PlanValidator` rejects candidate plans when:
+
+- The plan is empty.
+- Node ids are duplicated.
+- A node references an unknown agent.
+- A node runtime mode does not match the registered agent profile.
+- A dependency points to an unknown node.
+- A node repeats the same dependency.
+- The dependency graph contains a cycle.
+- The graph has zero or multiple root nodes.
+- A `data_file_analysis` plan does not match the expected profile -> analysis -> report pattern.
+
+`TaskDagExecutor.from_plan` adds a final defense by refusing any plan whose status is not `frozen`.

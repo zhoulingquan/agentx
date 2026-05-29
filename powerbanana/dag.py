@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from .blackboard import TaskBlackboard
+from .models import TaskPlan
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,12 @@ class TaskDagNode:
 class TaskDagExecutor:
     def __init__(self, nodes: list[TaskDagNode]) -> None:
         self.nodes = nodes
+
+    @classmethod
+    def from_plan(cls, plan: TaskPlan) -> "TaskDagExecutor":
+        if plan.status != "frozen":
+            raise ValueError("TaskDagExecutor requires a frozen task plan.")
+        return cls(plan.nodes)
 
     def run(self, blackboard: TaskBlackboard, handlers: dict[str, Callable[..., object]], file_path: Path, report_context: dict[str, str]) -> object:
         completed: set[str] = set()

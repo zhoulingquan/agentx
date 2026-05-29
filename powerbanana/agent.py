@@ -40,7 +40,7 @@ class PowerBananaAgent:
         if blackboard.planner_evaluation.gate_action == "block":
             return self._planner_blocked_report(blackboard)
         blackboard.task_plan = PlanValidator().validate(planner_result.candidate_plan)
-        task_dag = TaskDagExecutor(blackboard.task_plan.nodes)
+        task_dag = TaskDagExecutor.from_plan(blackboard.task_plan)
         result = task_dag.run(
             blackboard,
             {

@@ -57,6 +57,7 @@ Supported:
 - Single-table conversion-rate analysis.
 - Deterministic no-LLM execution.
 - Deterministic candidate planning before DAG execution.
+- Strict plan validation before DAG execution.
 - Governed planner lexicon for scenario classification.
 - Task DAG trace, Blackboard events, Step trace, Evaluation result.
 - Golden cases, calibration cases, and replay snapshots.

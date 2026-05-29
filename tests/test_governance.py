@@ -5,7 +5,9 @@ from pathlib import Path
 
 from powerbanana.agent import PowerBananaAgent
 from powerbanana.evals import GoldenCaseRunner, PlannerGoldenCaseRunner
-from powerbanana.plan import PlanValidator, default_powerbanana_task_plan
+from powerbanana.dag import TaskDagExecutor
+from powerbanana.models import TaskPlan, TaskPlanNode
+from powerbanana.plan import PlanValidationError, PlanValidator, default_powerbanana_task_plan
 from powerbanana.planner import DeterministicDataFilePlanner
 
 
@@ -54,6 +56,82 @@ class PowerBananaGovernanceTests(unittest.TestCase):
             [node.agent_id for node in report.task_plan.nodes],
             ["data_profile_agent", "data_analysis_agent", "report_agent"],
         )
+
+    def test_plan_validator_rejects_empty_plan(self):
+        plan = TaskPlan("plan_empty", "data_file_analysis", "candidate", [])
+
+        with self.assertRaisesRegex(PlanValidationError, "empty"):
+            PlanValidator().validate(plan)
+
+    def test_plan_validator_rejects_duplicate_dependencies(self):
+        plan = TaskPlan(
+            "plan_duplicate_dependencies",
+            "data_file_analysis",
+            "candidate",
+            [
+                TaskPlanNode("dag_node_profile", "data_profile_agent", "workflow"),
+                TaskPlanNode(
+                    "dag_node_analysis",
+                    "data_analysis_agent",
+                    "autonomous",
+                    depends_on=["dag_node_profile", "dag_node_profile"],
+                ),
+                TaskPlanNode("dag_node_report", "report_agent", "workflow", depends_on=["dag_node_analysis"]),
+            ],
+        )
+
+        with self.assertRaisesRegex(PlanValidationError, "duplicate dependencies"):
+            PlanValidator().validate(plan)
+
+    def test_plan_validator_rejects_cycle(self):
+        plan = TaskPlan(
+            "plan_cycle",
+            "data_file_analysis",
+            "candidate",
+            [
+                TaskPlanNode("dag_node_profile", "data_profile_agent", "workflow", depends_on=["dag_node_report"]),
+                TaskPlanNode("dag_node_analysis", "data_analysis_agent", "autonomous", depends_on=["dag_node_profile"]),
+                TaskPlanNode("dag_node_report", "report_agent", "workflow", depends_on=["dag_node_analysis"]),
+            ],
+        )
+
+        with self.assertRaisesRegex(PlanValidationError, "cycle"):
+            PlanValidator().validate(plan)
+
+    def test_plan_validator_rejects_disconnected_node(self):
+        plan = TaskPlan(
+            "plan_disconnected",
+            "data_file_analysis",
+            "candidate",
+            [
+                TaskPlanNode("dag_node_profile", "data_profile_agent", "workflow"),
+                TaskPlanNode("dag_node_report", "report_agent", "workflow"),
+            ],
+        )
+
+        with self.assertRaisesRegex(PlanValidationError, "disconnected"):
+            PlanValidator().validate(plan)
+
+    def test_plan_validator_rejects_data_file_analysis_pattern_mismatch(self):
+        plan = TaskPlan(
+            "plan_wrong_pattern",
+            "data_file_analysis",
+            "candidate",
+            [
+                TaskPlanNode("dag_node_profile", "data_profile_agent", "workflow"),
+                TaskPlanNode("dag_node_report", "report_agent", "workflow", depends_on=["dag_node_profile"]),
+                TaskPlanNode("dag_node_analysis", "data_analysis_agent", "autonomous", depends_on=["dag_node_report"]),
+            ],
+        )
+
+        with self.assertRaisesRegex(PlanValidationError, "pattern"):
+            PlanValidator().validate(plan)
+
+    def test_dag_executor_rejects_unfrozen_plan_nodes(self):
+        plan = default_powerbanana_task_plan()
+
+        with self.assertRaisesRegex(ValueError, "frozen"):
+            TaskDagExecutor.from_plan(plan)
 
     def test_step_plan_has_idempotency_and_attempt_metadata(self):
         path = self.write_csv(
