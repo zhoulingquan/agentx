@@ -18,3 +18,5 @@ python -m unittest discover -s tests
 ```
 
 Do not commit generated caches such as `__pycache__`, `.pytest_cache`, coverage output, or local run artifacts.
+
+Planner vocabulary lives in `config/planner_lexicon.csv`. After editing that CSV, run the Planner lexicon and golden case tests.

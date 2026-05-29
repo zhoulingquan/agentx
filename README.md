@@ -22,7 +22,7 @@ The v0.1 runtime includes explicit sub-agents:
 The runtime now includes the first governance pieces from the v0.3 design:
 
 - `DeterministicDataFilePlanner` creates a candidate Task Plan before any DAG execution.
-- `PlannerClassifier` maps user questions to known scenarios with a governed lexicon and user-reviewable suggestions.
+- `PlannerClassifier` maps user questions to known scenarios with the user-editable `config/planner_lexicon.csv`.
 - `PlannerIntentEvaluator` checks Planner intent consistency before the frozen plan is executed.
 - `TaskDagExecutor` schedules `data_profile_agent -> data_analysis_agent -> report_agent`.
 - `TaskPlan` and `PlanValidator` freeze the Planner candidate before execution.
@@ -83,6 +83,14 @@ Run planner golden cases:
 ```powershell
 python -c "from pathlib import Path; from powerbanana.evals import PlannerGoldenCaseRunner; print(PlannerGoldenCaseRunner(Path('evals/planner_cases')).run_all())"
 ```
+
+Edit Planner vocabulary:
+
+```text
+config/planner_lexicon.csv
+```
+
+Add terms by editing the CSV and restarting PowerBanana.
 
 ## Extending Evaluation
 
@@ -156,6 +164,7 @@ Keep these project assets in Git:
 | Path | Purpose |
 |---|---|
 | `powerbanana/` | Runtime source code. |
+| `config/` | User-editable Planner lexicon CSV. |
 | `tests/` | Automated tests for the CLI, Planner, Blackboard, DAG, and governance behavior. |
 | `evals/` | Synthetic planner cases, golden cases, calibration cases, and fixtures. |
 | `docs/` | GitHub Pages documentation. |

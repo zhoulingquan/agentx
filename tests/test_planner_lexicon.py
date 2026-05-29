@@ -1,4 +1,3 @@
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,26 +38,25 @@ class PlannerLexiconTests(unittest.TestCase):
         self.assertIn("forecast", intent.matched_signals)
 
     def test_user_lexicon_extends_default_terms(self):
-        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        handle = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8", newline="")
         with handle:
-            json.dump(
-                {
-                    "version": "user-v1",
-                    "scenarios": {
-                        "conversion_rate_analysis": {
-                            "required_any": [["成交率"]],
-                            "optional": ["渠道", "最高"],
-                        }
-                    },
-                },
-                handle,
+            handle.write(
+                "scenario_id,match_type,terms,confidence_base\n"
+                "conversion_rate_analysis,required_any,转单率,0.82\n"
+                "conversion_rate_analysis,optional,渠道|最高,\n"
             )
 
-        lexicon = LexiconStore(default_planner_lexicon()).load_user_overrides(Path(handle.name))
-        intent = PlannerClassifier(lexicon).classify("哪个渠道成交率最高？")
+        lexicon = LexiconStore().load_csv(Path(handle.name))
+        intent = PlannerClassifier(lexicon).classify("哪个渠道转单率最高？")
 
         self.assertEqual(intent.scenario_id, "conversion_rate_analysis")
-        self.assertIn("成交率", intent.matched_signals)
+        self.assertIn("转单率", intent.matched_signals)
+
+    def test_default_lexicon_loads_from_config_csv(self):
+        lexicon = default_planner_lexicon()
+
+        self.assertTrue(lexicon.version.startswith("csv:"))
+        self.assertIn("conversion_rate_analysis", lexicon.scenarios)
 
     def test_suggestion_builder_records_pending_user_review(self):
         suggestion = LexiconSuggestionBuilder().from_misclassification(

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import json
+import csv
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from .models import PlannerIntent
+
+DEFAULT_LEXICON_PATH = Path(__file__).resolve().parent.parent / "config" / "planner_lexicon.csv"
 
 
 @dataclass(frozen=True)
@@ -77,17 +78,59 @@ class PlannerClassifier:
 
 
 class LexiconStore:
-    def __init__(self, base_lexicon: PlannerLexicon) -> None:
-        self.base_lexicon = base_lexicon
+    def load_csv(self, path: Path) -> PlannerLexicon:
+        scenarios: dict[str, ScenarioRule] = {}
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                scenario_id = row.get("scenario_id", "").strip()
+                match_type = row.get("match_type", "").strip()
+                terms = row.get("terms", "").strip()
+                if not scenario_id or not match_type or not terms:
+                    continue
+                base_rule = scenarios.get(scenario_id, ScenarioRule(scenario_id=scenario_id, required_any=[]))
+                scenarios[scenario_id] = self._append_row(base_rule, match_type, terms, row.get("confidence_base", ""))
+        return PlannerLexicon(version=f"csv:{path.as_posix()}", scenarios=scenarios)
 
-    def load_user_overrides(self, path: Path) -> PlannerLexicon:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        scenarios = dict(self.base_lexicon.scenarios)
-        for scenario_id, rule_payload in payload.get("scenarios", {}).items():
-            base_rule = scenarios.get(scenario_id, ScenarioRule(scenario_id=scenario_id, required_any=[]))
-            scenarios[scenario_id] = _merge_rule(base_rule, rule_payload)
-        version = f"{self.base_lexicon.version}+{payload.get('version', 'user')}"
-        return PlannerLexicon(version=version, scenarios=scenarios)
+    def _append_row(self, rule: ScenarioRule, match_type: str, terms: str, confidence_base: str | None) -> ScenarioRule:
+        confidence = _parse_confidence(confidence_base, rule.confidence_base)
+        if match_type == "required_any":
+            return ScenarioRule(
+                scenario_id=rule.scenario_id,
+                required_any=[*rule.required_any, *_parse_required_groups(terms)],
+                optional=rule.optional,
+                negative=rule.negative,
+                confidence_base=confidence,
+                warnings=rule.warnings,
+            )
+        if match_type == "optional":
+            return ScenarioRule(
+                scenario_id=rule.scenario_id,
+                required_any=rule.required_any,
+                optional=[*rule.optional, *_split_terms(terms)],
+                negative=rule.negative,
+                confidence_base=confidence,
+                warnings=rule.warnings,
+            )
+        if match_type == "negative":
+            return ScenarioRule(
+                scenario_id=rule.scenario_id,
+                required_any=rule.required_any,
+                optional=rule.optional,
+                negative=[*rule.negative, *_split_terms(terms)],
+                confidence_base=confidence,
+                warnings=rule.warnings,
+            )
+        if match_type == "warnings":
+            return ScenarioRule(
+                scenario_id=rule.scenario_id,
+                required_any=rule.required_any,
+                optional=rule.optional,
+                negative=rule.negative,
+                confidence_base=confidence,
+                warnings=[*rule.warnings, *_split_terms(terms)],
+            )
+        raise ValueError(f"Unsupported planner lexicon match_type: {match_type}")
 
 
 class LexiconSuggestionBuilder:
@@ -106,52 +149,27 @@ class LexiconSuggestionBuilder:
         )
 
 
-def default_planner_lexicon() -> PlannerLexicon:
-    return PlannerLexicon(
-        version="builtin-v1",
-        scenarios={
-            "unsupported_forecast": ScenarioRule(
-                scenario_id="unsupported_forecast",
-                required_any=[["forecast"], ["predict"], ["预测"], ["预估"]],
-                optional=["next month", "sales", "revenue", "conversion rate"],
-                confidence_base=0.9,
-                warnings=["unsupported_capability"],
-            ),
-            "conversion_rate_analysis": ScenarioRule(
-                scenario_id="conversion_rate_analysis",
-                required_any=[["conversion", "rate"], ["conversion_rate"], ["转化率"], ["成交率"]],
-                optional=["highest", "best", "channel", "渠道", "最高"],
-                negative=["forecast", "predict", "预测", "预估", "join", "merge"],
-                confidence_base=0.8,
-            ),
-            "unsupported_revenue": ScenarioRule(
-                scenario_id="unsupported_revenue",
-                required_any=[["revenue"], ["sales"], ["收入"], ["营收"], ["gmv"]],
-                optional=["highest", "best", "channel", "渠道"],
-                confidence_base=0.85,
-                warnings=["unsupported_capability"],
-            ),
-            "ambiguous_metric": ScenarioRule(
-                scenario_id="ambiguous_metric",
-                required_any=[["best"], ["perform"], ["performs"], ["表现最好"], ["最好"]],
-                optional=["channel", "渠道"],
-                negative=["conversion", "rate", "revenue", "orders", "visits", "转化率", "成交率", "收入", "营收"],
-                confidence_base=0.7,
-                warnings=["missing_metric"],
-            ),
-        },
-    )
+def default_planner_lexicon(path: Path | None = None) -> PlannerLexicon:
+    return LexiconStore().load_csv(path or DEFAULT_LEXICON_PATH)
 
 
-def _merge_rule(base_rule: ScenarioRule, payload: dict[str, Any]) -> ScenarioRule:
-    return replace(
-        base_rule,
-        required_any=[*base_rule.required_any, *payload.get("required_any", [])],
-        optional=[*base_rule.optional, *payload.get("optional", [])],
-        negative=[*base_rule.negative, *payload.get("negative", [])],
-        warnings=[*base_rule.warnings, *payload.get("warnings", [])],
-        confidence_base=payload.get("confidence_base", base_rule.confidence_base),
-    )
+def _parse_confidence(value: str | None, fallback: float) -> float:
+    if value is None or not str(value).strip():
+        return fallback
+    return float(str(value).strip())
+
+
+def _parse_required_groups(terms: str) -> list[list[str]]:
+    groups = []
+    for group in _split_terms(terms):
+        members = [term.strip() for term in group.split("+") if term.strip()]
+        if members:
+            groups.append(members)
+    return groups
+
+
+def _split_terms(terms: str) -> list[str]:
+    return [term.strip() for term in terms.split("|") if term.strip()]
 
 
 def _normalize(text: str) -> str:
