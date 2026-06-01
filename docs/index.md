@@ -1,6 +1,6 @@
 # PowerBanana Documentation
 
-PowerBanana is a v0.1 reference agent built from the AgentX v0.3 governed-agent design. It currently focuses on one deterministic Phase 1 path: answering conversion-rate questions from a CSV or simple XLSX dataset.
+PowerBanana is a v0.1 reference agent built from the AgentX v0.3 governed-agent design. It currently focuses on one deterministic Phase 1 path: ranking channels by conversion rate, revenue, orders, or visits from a CSV or simple XLSX dataset.
 
 ## Quick Start
 
@@ -22,16 +22,16 @@ docker run --rm -it -v ${PWD}:/data powerbanana
 Use a CSV with these columns:
 
 ```csv
-channel,visits,orders
-email,100,20
-ads,200,30
-organic,80,8
+channel,visits,orders,revenue
+email,100,20,500
+ads,200,30,900
+organic,80,8,160
 ```
 
 Typical question:
 
 ```text
-Which channel has the highest conversion rate?
+Which channel has the highest revenue?
 ```
 
 ## Project Areas
@@ -54,7 +54,7 @@ Supported:
 
 - CSV files.
 - Simple XLSX files when `openpyxl` is installed.
-- Single-table conversion-rate analysis.
+- Single-table metric ranking for conversion rate, revenue, orders, and visits.
 - Deterministic no-LLM execution.
 - Deterministic candidate planning before DAG execution.
 - Strict plan validation before DAG execution.

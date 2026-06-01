@@ -6,6 +6,7 @@ from typing import Protocol
 
 from .models import PlannerTrace, TaskPlan
 from .plan import default_powerbanana_task_plan
+from .analysis_request import AnalysisRequestParser, AnalysisTerms, default_analysis_terms
 from .planner_lexicon import PlannerClassifier, PlannerLexicon, default_planner_lexicon
 
 
@@ -27,13 +28,20 @@ class DeterministicDataFilePlanner:
     planner_id = "deterministic_data_file_planner"
     planner_mode = "deterministic_no_llm"
 
-    def __init__(self, lexicon: PlannerLexicon | None = None) -> None:
+    def __init__(self, lexicon: PlannerLexicon | None = None, analysis_terms: AnalysisTerms | None = None) -> None:
         self.lexicon = lexicon or default_planner_lexicon()
         self.classifier = PlannerClassifier(self.lexicon)
+        self.analysis_terms = analysis_terms or default_analysis_terms()
+        self.analysis_request_parser = AnalysisRequestParser(self.analysis_terms)
 
     def plan(self, file_path: Path, question: str) -> PlannerResult:
         candidate_plan = default_powerbanana_task_plan()
         intent = self.classifier.classify(question)
+        analysis_request = (
+            self.analysis_request_parser.parse_optional(question)
+            if intent.scenario_id == "metric_analysis"
+            else None
+        )
         return PlannerResult(
             candidate_plan=candidate_plan,
             trace=PlannerTrace(
@@ -49,5 +57,6 @@ class DeterministicDataFilePlanner:
                 warnings=intent.warnings,
                 intent=intent,
                 lexicon_version=self.lexicon.version,
+                analysis_request=analysis_request,
             ),
         )

@@ -120,12 +120,6 @@ class PlannerEvaluationTests(unittest.TestCase):
                 "does not support forecasting",
             ),
             (
-                "Which channel has the highest revenue?",
-                "unsupported_revenue",
-                "unsupported_question",
-                "does not support revenue analysis",
-            ),
-            (
                 "Summarize this upload.",
                 "unknown",
                 "unknown_scenario",

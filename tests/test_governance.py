@@ -31,8 +31,11 @@ class PowerBananaGovernanceTests(unittest.TestCase):
         self.assertEqual(result.trace.planner_mode, "deterministic_no_llm")
         self.assertEqual(result.trace.status, "candidate_created")
         self.assertEqual(result.trace.candidate_plan_id, result.candidate_plan.plan_id)
-        self.assertEqual(result.trace.intent.scenario_id, "conversion_rate_analysis")
+        self.assertEqual(result.trace.intent.scenario_id, "metric_analysis")
         self.assertGreaterEqual(result.trace.intent.confidence, 0.8)
+        self.assertIsNotNone(result.trace.analysis_request)
+        self.assertEqual(result.trace.analysis_request.metric, "conversion_rate")
+        self.assertEqual(result.trace.analysis_request.rank_direction, "highest")
 
     def test_task_plan_is_validated_frozen_and_reported(self):
         plan = default_powerbanana_task_plan()

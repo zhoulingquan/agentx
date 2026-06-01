@@ -12,7 +12,7 @@ from .planner import DeterministicDataFilePlanner, Planner
 from .subagents import DataAnalysisAgent, DataProfileAgent, ReportAgent
 
 
-EXECUTABLE_PLANNER_SCENARIOS = {"conversion_rate_analysis"}
+EXECUTABLE_PLANNER_SCENARIOS = {"metric_analysis", "conversion_rate_analysis"}
 
 PLANNER_ROUTE_MESSAGES = {
     "ambiguous_metric": {
@@ -25,15 +25,10 @@ PLANNER_ROUTE_MESSAGES = {
         "answer": "PowerBanana v0.1 does not support forecasting yet. Please ask for conversion rate by group.",
         "prompt": "Please ask for a supported conversion-rate question by group.",
     },
-    "unsupported_revenue": {
-        "failure_reason": "unsupported_question",
-        "answer": "PowerBanana v0.1 does not support revenue analysis yet. Please ask for conversion rate by group.",
-        "prompt": "Please ask for a supported conversion-rate question by group.",
-    },
     "unknown": {
         "failure_reason": "unknown_scenario",
-        "answer": "PowerBanana could not classify this question. Please ask for a supported conversion-rate question by group.",
-        "prompt": "Please rephrase as a supported conversion-rate question by group.",
+        "answer": "PowerBanana could not classify this question. Please ask for a supported channel metric question.",
+        "prompt": "Please rephrase as a supported channel metric question.",
     },
 }
 
@@ -102,8 +97,8 @@ class PowerBananaAgent:
             scenario_id,
             {
                 "failure_reason": "unsupported_question",
-                "answer": "PowerBanana v0.1 supports conversion-rate questions for CSV datasets. Please ask for conversion rate by group.",
-                "prompt": "Please ask for a conversion-rate question using channel, visits, and orders.",
+                "answer": "PowerBanana v0.1 supports channel metric questions for CSV datasets.",
+                "prompt": "Please ask for a channel metric question using conversion_rate, revenue, orders, or visits.",
             },
         )
         target_ref = f"blackboard://{blackboard.task_id}/planner/{blackboard.planner_trace.candidate_plan_id}/routing"

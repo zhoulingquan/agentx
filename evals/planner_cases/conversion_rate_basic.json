@@ -1,7 +1,7 @@
 {
   "case_id": "conversion_rate_basic",
   "question": "Which channel has the highest conversion rate?",
-  "expected_scenario": "conversion_rate_analysis",
+  "expected_scenario": "metric_analysis",
   "expected_min_confidence": 0.8,
   "expected_matched_signals_contains": ["conversion", "rate"]
 }

@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Callable, Any
 
-from .models import AnalysisResult, DatasetSnapshot, EvaluationResult, StepPlan, StepRecord
+from .models import AnalysisRequest, AnalysisResult, DatasetSnapshot, EvaluationResult, StepPlan, StepRecord
 
 
 @dataclass(frozen=True)
@@ -27,9 +27,9 @@ def build_default_skill_registry() -> SkillRegistry:
             "compute_grouped_metric": SkillDefinition(
                 skill_id="compute_grouped_metric",
                 version="0.1.0",
-                input_schema="Rows",
+                input_schema="Rows,AnalysisRequest",
                 output_schema="MetricResult",
-                handler=compute_grouped_conversion_rate,
+                handler=compute_grouped_metric,
             ),
             "rank_metric_values": SkillDefinition(
                 skill_id="rank_metric_values",
@@ -49,32 +49,52 @@ def to_float(value: object) -> float | None:
         return None
 
 
-def compute_grouped_conversion_rate(rows: list[dict[str, str]]) -> tuple[dict[str, float], int]:
+def compute_grouped_metric(rows: list[dict[str, str]], request: AnalysisRequest) -> tuple[dict[str, float], int]:
+    if request.metric == "conversion_rate":
+        return compute_grouped_conversion_rate(rows, request.group_by)
+    return compute_grouped_sum(rows, request.metric, request.group_by)
+
+
+def compute_grouped_conversion_rate(rows: list[dict[str, str]], group_by: str = "channel") -> tuple[dict[str, float], int]:
     grouped: dict[str, dict[str, float]] = defaultdict(lambda: {"visits": 0.0, "orders": 0.0})
     skipped_rows = 0
     for row in rows:
-        channel = str(row.get("channel", "")).strip()
+        group_value = str(row.get(group_by, "")).strip()
         visits = to_float(row.get("visits"))
         orders = to_float(row.get("orders"))
-        if not channel or visits is None or orders is None:
+        if not group_value or visits is None or orders is None:
             skipped_rows += 1
             continue
-        grouped[channel]["visits"] += visits
-        grouped[channel]["orders"] += orders
+        grouped[group_value]["visits"] += visits
+        grouped[group_value]["orders"] += orders
 
     rates = {
-        channel: totals["orders"] / totals["visits"]
-        for channel, totals in grouped.items()
+        group_value: totals["orders"] / totals["visits"]
+        for group_value, totals in grouped.items()
         if totals["visits"] > 0
     }
     return rates, skipped_rows
 
 
-def rank_metric_values(rates: dict[str, float]) -> tuple[str, float]:
-    return max(rates.items(), key=lambda item: item[1])
+def compute_grouped_sum(rows: list[dict[str, str]], metric: str, group_by: str) -> tuple[dict[str, float], int]:
+    grouped: dict[str, float] = defaultdict(float)
+    skipped_rows = 0
+    for row in rows:
+        group_value = str(row.get(group_by, "")).strip()
+        metric_value = to_float(row.get(metric))
+        if not group_value or metric_value is None:
+            skipped_rows += 1
+            continue
+        grouped[group_value] += metric_value
+    return dict(grouped), skipped_rows
 
 
-def conversion_rate_step_trace(analysis: AnalysisResult, step_plan: StepPlan | None = None) -> list[StepRecord]:
+def rank_metric_values(values: dict[str, float], rank_direction: str = "highest") -> tuple[str, float]:
+    ranker = min if rank_direction == "lowest" else max
+    return ranker(values.items(), key=lambda item: item[1])
+
+
+def metric_step_trace(analysis: AnalysisResult, step_plan: StepPlan | None = None) -> list[StepRecord]:
     idempotency_by_step = {
         step.step_id: step.idempotency_key
         for step in step_plan.steps
@@ -101,6 +121,10 @@ def conversion_rate_step_trace(analysis: AnalysisResult, step_plan: StepPlan | N
             idempotency_key=idempotency_by_step.get("s2", ""),
         ),
     ]
+
+
+def conversion_rate_step_trace(analysis: AnalysisResult, step_plan: StepPlan | None = None) -> list[StepRecord]:
+    return metric_step_trace(analysis, step_plan)
 
 
 def evaluate_metric(snapshot: DatasetSnapshot, analysis: AnalysisResult) -> EvaluationResult:

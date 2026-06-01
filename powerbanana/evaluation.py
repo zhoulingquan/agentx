@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from .models import AnalysisResult, DatasetSnapshot, EvaluationResult, PlannerTrace, SecurityFinding, StepRecord
+from .models import AnalysisRequest, AnalysisResult, DatasetSnapshot, EvaluationResult, PlannerTrace, SecurityFinding, StepRecord
 
 
 GATE_ACTION_ORDER = {
@@ -104,6 +104,8 @@ class EvaluationRunner:
             analysis_result=blackboard.analysis_result,
             security_findings=blackboard.security_findings,
             step_trace=blackboard.step_trace,
+            question=blackboard.question,
+            planner_trace=blackboard.planner_trace,
             target_ref=f"blackboard://{blackboard.task_id}/artifacts/analysis_result_v1",
         )
         return self.evaluate_context(context)
@@ -321,13 +323,11 @@ class MetricRecomputeEvaluator:
         if analysis is None:
             return EvaluatorOutcome(self.evaluator_id, self.version, True)
         failures = []
-        if analysis.metric != "conversion_rate":
-            failures.append("metric_mismatch")
-        if analysis.group_by != "channel":
-            failures.append("group_by_mismatch")
-        rates = self._compute_conversion_rates(context.rows)
-        if not rates:
-            failures.append("no_valid_denominator")
+        if analysis.metric not in {"conversion_rate", "revenue", "orders", "visits"}:
+            failures.append("unsupported_metric")
+        values = self._compute_metric_values(context.rows, analysis.metric, analysis.group_by)
+        if not values:
+            failures.append("no_valid_denominator" if analysis.metric == "conversion_rate" else "no_valid_metric_values")
             return EvaluatorOutcome(
                 evaluator_id=self.evaluator_id,
                 version=self.version,
@@ -336,14 +336,16 @@ class MetricRecomputeEvaluator:
                 scores={"metric_correctness": 0.0},
                 gate_action="return_partial",
             )
-        expected_top_value, expected_value = max(rates.items(), key=lambda item: item[1])
+        rank_direction = self._rank_direction(context)
+        ranker = min if rank_direction == "lowest" else max
+        expected_top_value, expected_value = ranker(values.items(), key=lambda item: item[1])
         if analysis.top_value != expected_top_value:
             failures.append("top_value_mismatch")
         if abs(analysis.value - expected_value) > 1e-9:
             failures.append("metric_value_mismatch")
-        for channel, expected_rate in rates.items():
-            actual_rate = analysis.values.get(channel)
-            if actual_rate is None or abs(actual_rate - expected_rate) > 1e-9:
+        for group_value, expected_metric_value in values.items():
+            actual_value = analysis.values.get(group_value)
+            if actual_value is None or abs(actual_value - expected_metric_value) > 1e-9:
                 failures.append("metric_values_mismatch")
                 break
         return EvaluatorOutcome(
@@ -357,23 +359,42 @@ class MetricRecomputeEvaluator:
             evidence_refs=[analysis.evidence_ref] if analysis.evidence_ref else [],
         )
 
-    def _compute_conversion_rates(self, rows: list[dict[str, str]]) -> dict[str, float]:
+    def _rank_direction(self, context: EvaluationContext) -> str:
+        request = context.planner_trace.analysis_request if context.planner_trace else None
+        return request.rank_direction if request else "highest"
+
+    def _compute_metric_values(self, rows: list[dict[str, str]], metric: str, group_by: str) -> dict[str, float]:
+        if metric == "conversion_rate":
+            return self._compute_conversion_rates(rows, group_by)
+        return self._compute_grouped_sums(rows, metric, group_by)
+
+    def _compute_conversion_rates(self, rows: list[dict[str, str]], group_by: str) -> dict[str, float]:
         grouped: dict[str, dict[str, float]] = {}
         for row in rows:
-            channel = str(row.get("channel", "")).strip()
+            group_value = str(row.get(group_by, "")).strip()
             visits = _to_float(row.get("visits"))
             orders = _to_float(row.get("orders"))
-            if not channel or visits is None or orders is None:
+            if not group_value or visits is None or orders is None:
                 continue
-            if channel not in grouped:
-                grouped[channel] = {"visits": 0.0, "orders": 0.0}
-            grouped[channel]["visits"] += visits
-            grouped[channel]["orders"] += orders
+            if group_value not in grouped:
+                grouped[group_value] = {"visits": 0.0, "orders": 0.0}
+            grouped[group_value]["visits"] += visits
+            grouped[group_value]["orders"] += orders
         return {
-            channel: totals["orders"] / totals["visits"]
-            for channel, totals in grouped.items()
+            group_value: totals["orders"] / totals["visits"]
+            for group_value, totals in grouped.items()
             if totals["visits"] > 0
         }
+
+    def _compute_grouped_sums(self, rows: list[dict[str, str]], metric: str, group_by: str) -> dict[str, float]:
+        grouped: dict[str, float] = {}
+        for row in rows:
+            group_value = str(row.get(group_by, "")).strip()
+            metric_value = _to_float(row.get(metric))
+            if not group_value or metric_value is None:
+                continue
+            grouped[group_value] = grouped.get(group_value, 0.0) + metric_value
+        return grouped
 
 
 class ContextSecurityEvaluator:
@@ -435,6 +456,10 @@ class PlannerIntentEvaluator:
             if intent.scenario_id == "ambiguous_metric" and "missing_metric" not in intent.warnings:
                 failures.append("missing_metric_warning")
                 blocking_issues.append("missing_metric_warning")
+                score = 0.0
+            if intent.scenario_id in {"metric_analysis", "conversion_rate_analysis"} and trace.analysis_request is None:
+                failures.append("missing_analysis_request")
+                blocking_issues.append("missing_analysis_request")
                 score = 0.0
             warnings = intent.warnings
 
@@ -607,6 +632,9 @@ def _planner_trace_from_dict(data: dict[str, Any] | None) -> PlannerTrace | None
         from .models import PlannerIntent
 
         data = {**data, "intent": PlannerIntent(**intent_data)}
+    request_data = data.get("analysis_request")
+    if request_data is not None and not hasattr(request_data, "metric"):
+        data = {**data, "analysis_request": AnalysisRequest(**request_data)}
     return PlannerTrace(**data)
 
 

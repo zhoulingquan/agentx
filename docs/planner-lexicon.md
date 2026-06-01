@@ -18,9 +18,8 @@ The lexicon is not just a keyword list. It combines scenario rules, phrase group
 
 | Scenario | Example Signals | Notes |
 |---|---|---|
-| `conversion_rate_analysis` | `conversion + rate`, `转化率`, `成交率` | Supported first-path analysis. |
+| `metric_analysis` | `conversion + rate`, `revenue`, `orders`, `visits`, `转化率`, `营收` | Supported first-path analysis. |
 | `ambiguous_metric` | `best`, `perform`, `表现最好` without a specific metric | Produces a missing-metric warning. |
-| `unsupported_revenue` | `revenue`, `sales`, `收入`, `营收`, `GMV` | Recognized but not supported yet. |
 | `unsupported_forecast` | `forecast`, `predict`, `预测`, `预估` | Recognized but not supported yet. |
 | `unknown` | No rule matched | Keeps confidence low and marks `unknown_scenario`. |
 
@@ -32,7 +31,7 @@ Planner classification is protected by `evals/planner_cases/`. Each case is a JS
 {
   "case_id": "conversion_rate_basic",
   "question": "Which channel has the highest conversion rate?",
-  "expected_scenario": "conversion_rate_analysis",
+  "expected_scenario": "metric_analysis",
   "expected_min_confidence": 0.8,
   "expected_matched_signals_contains": ["conversion", "rate"]
 }
@@ -48,20 +47,20 @@ Add a planner golden case whenever a new user phrasing, synonym, unsupported cap
 
 ## User-Editable CSV
 
-All preset vocabulary is stored in `config/planner_lexicon.csv`. PowerBanana reads this CSV when `DeterministicDataFilePlanner` starts.
+Scenario vocabulary is stored in `config/planner_lexicon.csv`. Metric extraction vocabulary is stored in `config/analysis_terms.csv`. PowerBanana reads both CSV files when `DeterministicDataFilePlanner` starts.
 
 ```csv
 scenario_id,match_type,terms,confidence_base
-conversion_rate_analysis,required_any,conversion+rate|conversion_rate|转化率|成交率,0.8
-conversion_rate_analysis,optional,highest|best|channel|渠道|最高,
-conversion_rate_analysis,negative,forecast|predict|预测|预估|join|merge,
+metric_analysis,required_any,conversion+rate|conversion_rate|revenue|orders|visits,0.8
+metric_analysis,optional,highest|best|lowest|fewest|channel,
+metric_analysis,negative,forecast|predict|join|merge,
 ```
 
 CSV columns:
 
 | Column | Meaning |
 |---|---|
-| `scenario_id` | Target scenario such as `conversion_rate_analysis`. |
+| `scenario_id` | Target scenario such as `metric_analysis`. |
 | `match_type` | One of `required_any`, `optional`, `negative`, or `warnings`. |
 | `terms` | Terms separated by `|`. Use `+` when all terms in a phrase group must appear. |
 | `confidence_base` | Optional base confidence for the scenario. |
@@ -69,12 +68,16 @@ CSV columns:
 Examples:
 
 ```csv
-conversion_rate_analysis,required_any,转单率,0.8
-unsupported_revenue,required_any,GMV,
-unsupported_revenue,warnings,unsupported_capability,
+metric_analysis,required_any,net sales,0.8
 ```
 
-After editing the CSV, restart PowerBanana and run the planner golden cases.
+```csv
+kind,value,terms,aggregation,required_columns
+metric,revenue,revenue|sales|gmv,sum,channel|revenue
+rank_direction,lowest,lowest|fewest|least,,
+```
+
+After editing either CSV, restart PowerBanana and run the planner golden cases plus end-to-end golden cases.
 
 ## Expansion Governance
 

@@ -16,7 +16,7 @@ class PlannerLexiconTests(unittest.TestCase):
             "Which channel has the highest conversion rate?"
         )
 
-        self.assertEqual(intent.scenario_id, "conversion_rate_analysis")
+        self.assertEqual(intent.scenario_id, "metric_analysis")
         self.assertGreaterEqual(intent.confidence, 0.8)
         self.assertIn("conversion", intent.matched_signals)
         self.assertIn("rate", intent.matched_signals)
@@ -42,32 +42,41 @@ class PlannerLexiconTests(unittest.TestCase):
         with handle:
             handle.write(
                 "scenario_id,match_type,terms,confidence_base\n"
-                "conversion_rate_analysis,required_any,转单率,0.82\n"
-                "conversion_rate_analysis,optional,渠道|最高,\n"
+                "metric_analysis,required_any,conversion+rate,0.82\n"
+                "metric_analysis,optional,channel|highest,\n"
             )
 
         lexicon = LexiconStore().load_csv(Path(handle.name))
-        intent = PlannerClassifier(lexicon).classify("哪个渠道转单率最高？")
+        intent = PlannerClassifier(lexicon).classify("Which channel has the highest conversion rate?")
 
-        self.assertEqual(intent.scenario_id, "conversion_rate_analysis")
-        self.assertIn("转单率", intent.matched_signals)
+        self.assertEqual(intent.scenario_id, "metric_analysis")
+        self.assertIn("conversion", intent.matched_signals)
+        self.assertIn("rate", intent.matched_signals)
+
+    def test_default_lexicon_classifies_revenue_as_supported_metric_analysis(self):
+        intent = PlannerClassifier(default_planner_lexicon()).classify(
+            "Which channel has the highest revenue?"
+        )
+
+        self.assertEqual(intent.scenario_id, "metric_analysis")
+        self.assertIn("revenue", intent.matched_signals)
 
     def test_default_lexicon_loads_from_config_csv(self):
         lexicon = default_planner_lexicon()
 
         self.assertTrue(lexicon.version.startswith("csv:"))
-        self.assertIn("conversion_rate_analysis", lexicon.scenarios)
+        self.assertIn("metric_analysis", lexicon.scenarios)
 
     def test_suggestion_builder_records_pending_user_review(self):
         suggestion = LexiconSuggestionBuilder().from_misclassification(
             question="哪个渠道成交率最高？",
             actual_scenario="unknown",
-            expected_scenario="conversion_rate_analysis",
+            expected_scenario="metric_analysis",
             suggested_terms=["成交率"],
         )
 
         self.assertEqual(suggestion.status, "pending_review")
-        self.assertEqual(suggestion.expected_scenario, "conversion_rate_analysis")
+        self.assertEqual(suggestion.expected_scenario, "metric_analysis")
         self.assertEqual(suggestion.suggested_terms, ["成交率"])
 
 

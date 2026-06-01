@@ -1,0 +1,8 @@
+kind,value,terms,aggregation,required_columns
+metric,conversion_rate,conversion rate|conversion_rate|转化率|成交率,ratio,channel|visits|orders
+metric,revenue,revenue|sales|gmv|收入|营收,sum,channel|revenue
+metric,orders,orders|order count|订单|订单数,sum,channel|orders
+metric,visits,visits|traffic|sessions|访问|访问量|流量,sum,channel|visits
+group_by,channel,channel|渠道,,
+rank_direction,highest,highest|best|most|top|最高|最多,,
+rank_direction,lowest,lowest|fewest|least|bottom|最低|最少,,

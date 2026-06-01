@@ -1,0 +1,17 @@
+{
+  "case_id": "revenue_highest_question",
+  "dataset": "revenue_highest_question.csv",
+  "question": "Which channel has the highest revenue?",
+  "expected_status": "completed",
+  "expected_answer": "ads has the highest revenue at 900.00.",
+  "expected_top_value": "ads",
+  "expected_evaluation_verdict": "pass",
+  "expected_gate_action": "pass",
+  "expected_failure_reasons": [],
+  "expected_blocking_issues": [],
+  "expected_security_findings_count": 0,
+  "expected_human_gates_count": 0,
+  "expected_step_skills": ["compute_grouped_metric", "rank_metric_values"],
+  "expected_row_count": 2,
+  "expected_columns": ["channel", "visits", "orders", "revenue"]
+}

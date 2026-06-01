@@ -120,6 +120,15 @@ class PlannerIntent:
 
 
 @dataclass(frozen=True)
+class AnalysisRequest:
+    metric: str
+    group_by: str
+    aggregation: str
+    rank_direction: str
+    required_columns: list[str]
+
+
+@dataclass(frozen=True)
 class PlannerTrace:
     planner_id: str
     planner_mode: str
@@ -130,6 +139,7 @@ class PlannerTrace:
     warnings: list[str] = field(default_factory=list)
     intent: PlannerIntent | None = None
     lexicon_version: str = ""
+    analysis_request: AnalysisRequest | None = None
 
 
 @dataclass(frozen=True)

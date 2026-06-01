@@ -23,6 +23,7 @@ The runtime now includes the first governance pieces from the v0.3 design:
 
 - `DeterministicDataFilePlanner` creates a candidate Task Plan before any DAG execution.
 - `PlannerClassifier` maps user questions to known scenarios with the user-editable `config/planner_lexicon.csv`.
+- `AnalysisRequestParser` maps supported metric terms from `config/analysis_terms.csv` into structured analysis requests.
 - `PlannerIntentEvaluator` checks Planner intent consistency and blocks DAG execution when planning is unsafe.
 - Planner routing returns clarification for ambiguous, unsupported, or unknown scenarios before loading the dataset.
 - `PlanValidator` rejects malformed plans, including empty plans, cycles, duplicate dependencies, disconnected roots, and scenario pattern mismatches.
@@ -38,7 +39,7 @@ The runtime now includes the first governance pieces from the v0.3 design:
 - `LLMSettings` records deterministic no-LLM mode for v0.1 while preserving a future model configuration boundary.
 - `HumanGateRecord` captures clarification gates for ambiguous questions.
 
-PowerBanana v0.1 intentionally supports a small first path: answering which channel has the highest conversion rate from `channel`, `visits`, and `orders` columns.
+PowerBanana v0.1 intentionally supports a small first path: ranking channels by `conversion_rate`, `revenue`, `orders`, or `visits` from one table.
 
 ## Run
 
@@ -89,9 +90,10 @@ Edit Planner vocabulary:
 
 ```text
 config/planner_lexicon.csv
+config/analysis_terms.csv
 ```
 
-Add terms by editing the CSV and restarting PowerBanana.
+Add scenario terms or metric terms by editing the CSV files and restarting PowerBanana.
 
 ## Extending Evaluation
 
@@ -179,7 +181,7 @@ Supported in v0.1:
 - CSV files.
 - Simple XLSX files when `openpyxl` is installed.
 - Single-table analysis.
-- Conversion-rate question answering.
+- Channel ranking for conversion rate, revenue, orders, and visits.
 - Step trace and deterministic evaluation.
 
 Not supported yet:

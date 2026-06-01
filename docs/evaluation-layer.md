@@ -19,7 +19,7 @@ The layer now evaluates three targets:
 | `dataset_reference_evaluator` | Checks dataset version consistency | `block` |
 | `field_reference_evaluator` | Checks result fields reference dataset columns | `return_partial` |
 | `evidence_coverage_evaluator` | Checks evidence refs and step trace coverage | `block` |
-| `metric_recompute_evaluator` | Recomputes conversion rate from rows | `block` |
+| `metric_recompute_evaluator` | Recomputes requested metric values from rows | `block` |
 | `context_security_evaluator` | Checks prompt-injection findings were handled as data | `human_review` |
 
 ## Planner Evaluation
@@ -32,10 +32,11 @@ The layer now evaluates three targets:
 - A known non-`unknown` scenario has confidence below `0.5`.
 - `unsupported_*` scenarios do not carry `unsupported_capability`.
 - `ambiguous_metric` does not carry `missing_metric`.
+- `metric_analysis` scenarios do not include an `AnalysisRequest`.
 
 Planner evaluation is recorded separately as `planner_evaluation`, so final answer evaluation remains focused on the analysis result. If planner evaluation returns `block`, PowerBanana returns a blocked report immediately and does not validate the candidate plan, load the dataset, or run DAG nodes.
 
-After planner evaluation passes, `PowerBananaAgent` treats `conversion_rate_analysis` as the only executable v0.1 scenario. `ambiguous_metric`, `unsupported_*`, and `unknown` scenarios record a `planner_routing_gate` evaluation with `needs_clarification`, create a human clarification gate, and return before dataset loading or DAG execution.
+After planner evaluation passes, `PowerBananaAgent` treats `metric_analysis` as the executable v0.1 scenario. `ambiguous_metric`, `unsupported_*`, and `unknown` scenarios record a `planner_routing_gate` evaluation with `needs_clarification`, create a human clarification gate, and return before dataset loading or DAG execution.
 
 ## Gate Actions
 

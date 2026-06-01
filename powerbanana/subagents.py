@@ -9,6 +9,7 @@ from .context import ContextManager
 from .evaluation import EvaluationRunner
 from .memory import MemoryManager
 from .models import (
+    AnalysisRequest,
     AnalysisResult,
     DatasetSnapshot,
     PowerBananaReport,
@@ -17,7 +18,7 @@ from .models import (
     StepPlanStep,
 )
 from .policies import AutonomyPolicy, default_data_analysis_policy
-from .skills import SkillRegistry, build_default_skill_registry, conversion_rate_step_trace
+from .skills import SkillRegistry, build_default_skill_registry, metric_step_trace
 from .tools import ToolGateway
 
 
@@ -91,6 +92,10 @@ class DataAnalysisAgent:
 
     def run(self, blackboard: TaskBlackboard) -> None:
         self.context_manager.build_analysis_context(blackboard)
+        request = self._analysis_request(blackboard)
+        if request is not None:
+            self._answer_metric(blackboard, request)
+            return
         question = blackboard.question
         if self._is_ambiguous_performance_question(question):
             blackboard.status = "needs_clarification"
@@ -115,7 +120,7 @@ class DataAnalysisAgent:
 
         if not self._is_conversion_rate_question(question):
             blackboard.status = "needs_clarification"
-            blackboard.answer = "PowerBanana v0.1 supports conversion-rate questions for CSV datasets. Please ask for conversion rate by group."
+            blackboard.answer = "PowerBanana v0.1 supports channel metric questions for CSV datasets."
             blackboard.record_evaluation(
                 self.evaluation_runner.evaluate_gate(
                     blackboard,
@@ -129,7 +134,7 @@ class DataAnalysisAgent:
             blackboard.create_human_gate(
                 "clarification",
                 "unsupported_question",
-                "Please ask for a conversion-rate question using channel, visits, and orders.",
+                "Please ask for a channel metric question using conversion_rate, revenue, orders, or visits.",
             )
             blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "needs_clarification", "blackboard://task_001/decisions/unsupported_question")
             return
@@ -137,12 +142,24 @@ class DataAnalysisAgent:
         self._answer_conversion_rate(blackboard)
 
     def _answer_conversion_rate(self, blackboard: TaskBlackboard) -> None:
+        self._answer_metric(
+            blackboard,
+            AnalysisRequest(
+                metric="conversion_rate",
+                group_by="channel",
+                aggregation="ratio",
+                rank_direction="highest",
+                required_columns=["channel", "visits", "orders"],
+            ),
+        )
+
+    def _answer_metric(self, blackboard: TaskBlackboard, request: AnalysisRequest) -> None:
         snapshot = self._require_snapshot(blackboard)
-        required = {"channel", "visits", "orders"}
+        required = set(request.required_columns)
         missing = sorted(required - set(snapshot.columns))
         if missing:
             blackboard.status = "partial"
-            blackboard.answer = f"Cannot compute conversion_rate because required fields are missing: {', '.join(missing)}."
+            blackboard.answer = f"Cannot compute {request.metric} because required fields are missing: {', '.join(missing)}."
             blackboard.record_evaluation(
                 self.evaluation_runner.evaluate_gate(
                     blackboard,
@@ -153,53 +170,71 @@ class DataAnalysisAgent:
                     target_ref="blackboard://task_001/evaluations/missing_required_fields",
                 )
             )
-            blackboard.limitations = ["Required fields for conversion_rate are channel, visits, and orders."]
+            blackboard.limitations = [f"Required fields for {request.metric} are {', '.join(request.required_columns)}."]
             blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "partial", "blackboard://task_001/evaluations/missing_required_fields")
             return
 
-        step_plan = self._build_conversion_rate_step_plan()
+        step_plan = self._build_metric_step_plan()
         blackboard.step_plan = step_plan
         self.autonomy_policy.validate_step_plan([step.skill_id for step in step_plan.steps])
-        rates, skipped_rows = self.skill_registry.execute("compute_grouped_metric", blackboard.rows)
+        values, skipped_rows = self.skill_registry.execute("compute_grouped_metric", blackboard.rows, request)
         blackboard.append_event("skill_executed", self.profile.agent_id, "skill://compute_grouped_metric@0.1.0", {"step_id": "s1"})
-        if not rates:
+        if not values:
             blackboard.status = "partial"
-            blackboard.answer = "Cannot compute conversion_rate because no group has visits greater than zero."
+            if request.metric == "conversion_rate":
+                blackboard.answer = "Cannot compute conversion_rate because no group has visits greater than zero."
+                limitation = "At least one row needs a numeric visits value greater than zero."
+                failure_reason = "no_valid_denominator"
+            else:
+                blackboard.answer = f"Cannot compute {request.metric} because no valid numeric values were found."
+                limitation = f"At least one row needs a group and numeric {request.metric} value."
+                failure_reason = "no_valid_metric_values"
             blackboard.record_evaluation(
                 self.evaluation_runner.evaluate_gate(
                     blackboard,
                     verdict="partial",
-                    failure_reasons=["no_valid_denominator"],
+                    failure_reasons=[failure_reason],
                     gate_action="return_partial",
                     target_type="analysis_precheck",
-                    target_ref="blackboard://task_001/evaluations/no_valid_denominator",
+                    target_ref=f"blackboard://task_001/evaluations/{failure_reason}",
                 )
             )
-            blackboard.limitations = ["At least one row needs a numeric visits value greater than zero."]
-            blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "partial", "blackboard://task_001/evaluations/no_valid_denominator")
+            blackboard.limitations = [limitation]
+            blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, "partial", f"blackboard://task_001/evaluations/{failure_reason}")
             return
 
-        top_value, value = self.skill_registry.execute("rank_metric_values", rates)
+        top_value, value = self.skill_registry.execute("rank_metric_values", values, request.rank_direction)
         blackboard.append_event("skill_executed", self.profile.agent_id, "skill://rank_metric_values@0.1.0", {"step_id": "s2"})
         analysis = AnalysisResult(
-            metric="conversion_rate",
-            group_by="channel",
+            metric=request.metric,
+            group_by=request.group_by,
             top_value=top_value,
             value=value,
             evidence_ref="blackboard://task_001/artifacts/ranked_metric_result_s2_v1",
-            values=rates,
+            values=values,
         )
         blackboard.analysis_result = analysis
-        blackboard.step_trace = conversion_rate_step_trace(analysis, step_plan)
+        blackboard.step_trace = metric_step_trace(analysis, step_plan)
         blackboard.record_evaluation(self.evaluation_runner.evaluate_analysis(blackboard))
-        blackboard.answer = f"{top_value} has the highest conversion_rate at {value:.2%}."
+        blackboard.answer = self._format_answer(top_value, value, request)
         blackboard.status = "completed" if blackboard.evaluation.gate_action in {"pass", "pass_with_warning"} else "partial"
         if skipped_rows:
-            blackboard.limitations.append(f"Skipped {skipped_rows} rows with missing or nonnumeric channel, visits, or orders.")
+            blackboard.limitations.append(
+                f"Skipped {skipped_rows} rows with missing or nonnumeric {', '.join(request.required_columns)}."
+            )
         output_ref = blackboard.write_artifact("analysis_result_v1", analysis, self.profile.agent_id, expected_version=0)
         blackboard.record_agent(self.profile.agent_id, self.profile.runtime_mode, blackboard.status, output_ref)
 
-    def _build_conversion_rate_step_plan(self) -> StepPlan:
+    def _analysis_request(self, blackboard: TaskBlackboard) -> AnalysisRequest | None:
+        if blackboard.planner_trace is None:
+            return None
+        return blackboard.planner_trace.analysis_request
+
+    def _format_answer(self, top_value: str, value: float, request: AnalysisRequest) -> str:
+        formatted_value = f"{value:.2%}" if request.metric == "conversion_rate" else f"{value:.2f}"
+        return f"{top_value} has the {request.rank_direction} {request.metric} at {formatted_value}."
+
+    def _build_metric_step_plan(self) -> StepPlan:
         return StepPlan(
             step_plan_id="sp_task_001_analysis_v1",
             agent_id=self.profile.agent_id,

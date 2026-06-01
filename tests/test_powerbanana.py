@@ -78,6 +78,34 @@ class PowerBananaAgentTests(unittest.TestCase):
         self.assertEqual(report.security_findings[0].risk_type, "prompt_injection_in_cell")
         self.assertEqual(report.security_findings[0].action, "exclude_as_instruction_keep_as_data")
 
+    def test_answers_supported_sum_metrics_and_lowest_rank(self):
+        path = self.write_csv(
+            [
+                {"channel": "email", "visits": "100", "orders": "20", "revenue": "500"},
+                {"channel": "ads", "visits": "200", "orders": "30", "revenue": "900"},
+                {"channel": "organic", "visits": "80", "orders": "8", "revenue": "160"},
+            ]
+        )
+
+        revenue = PowerBananaAgent().answer(path, "Which channel has the highest revenue?")
+        orders = PowerBananaAgent().answer(path, "Which channel has the fewest orders?")
+        visits = PowerBananaAgent().answer(path, "Which channel has the lowest visits?")
+
+        self.assertEqual(revenue.status, "completed")
+        self.assertEqual(revenue.answer, "ads has the highest revenue at 900.00.")
+        self.assertEqual(revenue.analysis_result.metric, "revenue")
+        self.assertEqual(revenue.analysis_result.top_value, "ads")
+        self.assertEqual(revenue.planner_trace.analysis_request.metric, "revenue")
+
+        self.assertEqual(orders.status, "completed")
+        self.assertEqual(orders.answer, "organic has the lowest orders at 8.00.")
+        self.assertEqual(orders.analysis_result.top_value, "organic")
+        self.assertEqual(orders.planner_trace.analysis_request.rank_direction, "lowest")
+
+        self.assertEqual(visits.status, "completed")
+        self.assertEqual(visits.answer, "organic has the lowest visits at 80.00.")
+        self.assertEqual(visits.analysis_result.top_value, "organic")
+
     def test_requests_clarification_when_metric_is_ambiguous(self):
         path = self.write_csv(
             [

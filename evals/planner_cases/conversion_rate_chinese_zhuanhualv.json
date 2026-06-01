@@ -1,7 +1,7 @@
 {
   "case_id": "conversion_rate_chinese_zhuanhualv",
   "question": "哪个渠道转化率最高？",
-  "expected_scenario": "conversion_rate_analysis",
+  "expected_scenario": "metric_analysis",
   "expected_min_confidence": 0.8,
   "expected_matched_signals_contains": ["转化率"]
 }

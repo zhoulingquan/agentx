@@ -2,12 +2,9 @@ scenario_id,match_type,terms,confidence_base
 unsupported_forecast,required_any,forecast|predict|预测|预估,0.9
 unsupported_forecast,optional,next month|sales|revenue|conversion rate,
 unsupported_forecast,warnings,unsupported_capability,
-conversion_rate_analysis,required_any,conversion+rate|conversion_rate|转化率|成交率,0.8
-conversion_rate_analysis,optional,highest|best|channel|渠道|最高,
-conversion_rate_analysis,negative,forecast|predict|预测|预估|join|merge,
-unsupported_revenue,required_any,revenue|sales|收入|营收|gmv,0.85
-unsupported_revenue,optional,highest|best|channel|渠道,
-unsupported_revenue,warnings,unsupported_capability,
+metric_analysis,required_any,conversion+rate|conversion_rate|转化率|成交率|revenue|sales|收入|营收|gmv|orders|订单|visits|访问量|流量,0.8
+metric_analysis,optional,highest|best|lowest|fewest|most|channel|渠道|最高|最低|最多|最少,
+metric_analysis,negative,forecast|predict|预测|预估|join|merge,
 ambiguous_metric,required_any,best|perform|performs|表现最好|最好,0.7
 ambiguous_metric,optional,channel|渠道,
 ambiguous_metric,negative,conversion|rate|revenue|orders|visits|转化率|成交率|收入|营收,

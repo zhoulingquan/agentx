@@ -2,14 +2,14 @@
 
 PowerBanana now has an explicit Planner boundary before DAG execution.
 
-The current implementation is deterministic and does not call an LLM. It classifies the question with the governed planner lexicon from `config/planner_lexicon.csv`, creates the same Phase 1 data-file analysis plan every run, records a Planner trace on the Task Blackboard, evaluates that trace, routes non-executable scenarios to clarification, then hands only executable passing candidates to `PlanValidator`.
+The current implementation is deterministic and does not call an LLM. It classifies the question with the governed planner lexicon from `config/planner_lexicon.csv`, parses supported metric terms from `config/analysis_terms.csv`, creates the same Phase 1 data-file analysis plan every run, records a Planner trace on the Task Blackboard, evaluates that trace, routes non-executable scenarios to clarification, then hands only executable passing candidates to `PlanValidator`.
 
 ## Runtime Flow
 
 | Stage | Owner | Output | Notes |
 |---|---|---|---|
 | User request | `PowerBananaAgent` | File path and question | The request is still treated as untrusted input. |
-| Candidate planning | `DeterministicDataFilePlanner` | `PlannerResult` | Produces a candidate `TaskPlan` plus `PlannerTrace`. |
+| Candidate planning | `DeterministicDataFilePlanner` | `PlannerResult` | Produces a candidate `TaskPlan` plus `PlannerTrace` and optional `AnalysisRequest`. |
 | Planner evaluation | `PlannerIntentEvaluator` | `planner_evaluation` | Checks intent consistency, confidence, and required warnings. |
 | Planner gate | `PowerBananaAgent` | `blocked` report or continued execution | Blocks before validation and DAG execution when planner evaluation returns `block`. |
 | Planner routing | `PowerBananaAgent` | `planner_routing_gate` | Routes ambiguous, unsupported, or unknown scenarios to `needs_clarification` before dataset loading. |
@@ -23,12 +23,13 @@ The current implementation is deterministic and does not call an LLM. It classif
 
 - It sets `planner_mode` to `deterministic_no_llm`.
 - It loads `config/planner_lexicon.csv` at startup and classifies questions into known scenarios through `PlannerClassifier`.
+- It loads `config/analysis_terms.csv` and parses `AnalysisRequest` for executable `metric_analysis` questions.
 - It emits a candidate plan for `data_profile_agent -> data_analysis_agent -> report_agent`.
 - It does not execute tools, read data, mutate files, or decide final answers.
 - It writes an auditable `planner_trace` Blackboard entry with `intent`, `confidence`, matched signals, warnings, and lexicon version before validation.
 - Its trace is evaluated before the candidate plan is frozen.
 - If planner evaluation blocks, PowerBanana returns a structured blocked report without loading the dataset or running DAG nodes.
-- If the intent is not `conversion_rate_analysis`, PowerBanana records a `planner_routing_gate`, creates a clarification gate, and returns without loading the dataset or running DAG nodes.
+- If the intent is not executable, PowerBanana records a `planner_routing_gate`, creates a clarification gate, and returns without loading the dataset or running DAG nodes.
 
 This gives PowerBanana the same architectural slot that a future LLM planner will use, without introducing model nondeterminism yet.
 

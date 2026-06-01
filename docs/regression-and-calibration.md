@@ -16,9 +16,8 @@ Current coverage:
 
 | Case Type | Purpose |
 |---|---|
-| Conversion-rate phrasing | English and Chinese synonyms route to `conversion_rate_analysis` |
+| Metric-analysis phrasing | Conversion-rate and revenue synonyms route to `metric_analysis` |
 | Ambiguous performance phrasing | Missing metric routes to `ambiguous_metric` |
-| Unsupported revenue phrasing | Revenue-like requests route to `unsupported_revenue` |
 | Unsupported forecast phrasing | Forecast and prediction requests route to `unsupported_forecast` |
 | Unknown phrasing | Unmatched questions route to `unknown` |
 
@@ -44,7 +43,9 @@ Current coverage:
 | `nonnumeric_rows_skipped` | Bad rows skipped with limitation |
 | `prompt_injection_cell` | Cell-level prompt injection finding |
 | `ambiguous_performance_question` | Clarification gate |
-| `unsupported_revenue_question` | Unsupported question |
+| `revenue_highest_question` | Revenue metric success path |
+| `orders_lowest_question` | Lowest-rank orders metric |
+| `visits_lowest_question` | Lowest-rank visits metric |
 | `empty_csv` | Empty dataset boundary |
 
 ## Calibration Cases
