@@ -7,6 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from powerbanana import cli
+from powerbanana.models import VocabularySuggestion
+from powerbanana.vocabulary import VocabularySuggestionRepository
 
 
 class PowerBananaCliTests(unittest.TestCase):
@@ -22,6 +24,26 @@ class PowerBananaCliTests(unittest.TestCase):
                 ]
             )
         return Path(handle.name)
+
+    def write_pending_suggestion(self, store_path: Path) -> None:
+        VocabularySuggestionRepository(store_path).save_pending(
+            VocabularySuggestion(
+                target_csv="config/analysis_terms.csv",
+                kind="group_by",
+                value="region",
+                terms=["地区", "区域"],
+                reason="missing_group_by_term",
+                source="fake_llm",
+                confidence=0.8,
+            )
+        )
+
+    def write_terms_csv(self, path: Path) -> None:
+        path.write_text(
+            "kind,value,terms,aggregation,required_columns\n"
+            "group_by,channel,channel|渠道,,\n",
+            encoding="utf-8",
+        )
 
     def test_logo_is_yellow_ascii_power_banana(self):
         output = cli.yellow_logo()
@@ -68,3 +90,73 @@ class PowerBananaCliTests(unittest.TestCase):
 
         self.assertIn("pip install", dockerfile)
         self.assertIn('CMD ["powerbanana"]', dockerfile)
+
+    def test_vocab_list_prints_pending_suggestions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "vocabulary_suggestions.jsonl"
+            self.write_pending_suggestion(store_path)
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = cli.main(["vocab", "list", "--store", str(store_path)])
+
+            text = stdout.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("vocab_000001", text)
+            self.assertIn("pending_user_approval", text)
+            self.assertIn("group_by=region", text)
+
+    def test_vocab_approve_appends_terms_and_updates_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "vocabulary_suggestions.jsonl"
+            terms_path = Path(tmpdir) / "analysis_terms.csv"
+            self.write_pending_suggestion(store_path)
+            self.write_terms_csv(terms_path)
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = cli.main(
+                    [
+                        "vocab",
+                        "approve",
+                        "vocab_000001",
+                        "--store",
+                        str(store_path),
+                        "--analysis-terms",
+                        str(terms_path),
+                        "--note",
+                        "approved by test",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("approved vocab_000001", stdout.getvalue())
+            self.assertIn("group_by,region,地区|区域,,", terms_path.read_text(encoding="utf-8"))
+            self.assertEqual(VocabularySuggestionRepository(store_path).get_record("vocab_000001").status, "approved")
+
+    def test_vocab_reject_updates_status_without_csv_mutation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "vocabulary_suggestions.jsonl"
+            terms_path = Path(tmpdir) / "analysis_terms.csv"
+            self.write_pending_suggestion(store_path)
+            self.write_terms_csv(terms_path)
+            original = terms_path.read_text(encoding="utf-8")
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = cli.main(
+                    [
+                        "vocab",
+                        "reject",
+                        "vocab_000001",
+                        "--store",
+                        str(store_path),
+                        "--note",
+                        "not useful",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("rejected vocab_000001", stdout.getvalue())
+            self.assertEqual(terms_path.read_text(encoding="utf-8"), original)
+            self.assertEqual(VocabularySuggestionRepository(store_path).get_record("vocab_000001").status, "rejected")

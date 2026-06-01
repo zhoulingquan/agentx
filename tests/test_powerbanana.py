@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from powerbanana.analysis_request import default_analysis_terms
 from powerbanana.agent import PowerBananaAgent
 from powerbanana.evals import CalibrationRunner
 from powerbanana.evaluation import (
@@ -13,6 +14,8 @@ from powerbanana.evaluation import (
     default_evaluator_registry,
 )
 from powerbanana.models import VocabularySuggestion
+from powerbanana.subagents import DataAnalysisAgent
+from powerbanana.vocabulary import VocabularyManager, VocabularySuggestionRepository
 
 
 class FakeVocabularyAdvisor:
@@ -143,6 +146,34 @@ class PowerBananaAgentTests(unittest.TestCase):
         self.assertIn("analysis_terms.csv", report.answer)
         self.assertIn("region", report.answer)
         self.assertIn("vocabulary_suggestion", [entry.entry_type for entry in report.blackboard_entries])
+
+    def test_persists_llm_suggested_group_by_vocabulary_for_review(self):
+        path = self.write_csv(
+            [
+                {"region": "north", "revenue": "500"},
+                {"region": "south", "revenue": "900"},
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repository = VocabularySuggestionRepository(Path(tmpdir) / "vocabulary_suggestions.jsonl")
+            vocabulary_manager = VocabularyManager(
+                advisor=FakeVocabularyAdvisor(),
+                analysis_terms=default_analysis_terms(),
+                suggestion_repository=repository,
+            )
+            analysis_agent = DataAnalysisAgent(vocabulary_manager=vocabulary_manager)
+
+            report = PowerBananaAgent(data_analysis_agent=analysis_agent).answer(
+                path,
+                "哪个地区收入最高？",
+            )
+
+            self.assertEqual(report.status, "needs_clarification")
+            records = repository.list_records()
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].suggestion_id, "vocab_000001")
+            self.assertEqual(records[0].suggestion.value, "region")
+            self.assertEqual(records[0].status, "pending_user_approval")
 
     def test_requests_clarification_when_metric_is_ambiguous(self):
         path = self.write_csv(

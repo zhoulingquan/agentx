@@ -46,7 +46,17 @@ The suggestion must pass deterministic validation before it is shown to the user
 - The suggested value must exist in the dataset columns.
 - The suggested terms must not already be active.
 
-Accepted suggestions are recorded on the Blackboard and returned through a human approval gate. They are not written to CSV automatically and are not executed as an analysis request in the same run.
+Accepted suggestions are recorded on the Blackboard, persisted to `runs/vocabulary_suggestions.jsonl`, and returned through a human approval gate. They are not written to CSV automatically and are not executed as an analysis request in the same run.
+
+Review suggestions from the CLI:
+
+```powershell
+python -m powerbanana.cli vocab list
+python -m powerbanana.cli vocab approve vocab_000001
+python -m powerbanana.cli vocab reject vocab_000001 --note "Not needed"
+```
+
+Approval appends the reviewed term to `config/analysis_terms.csv`. Rejection updates only the local JSONL review log.
 
 ## Extension Direction
 

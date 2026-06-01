@@ -101,7 +101,15 @@ If the uploaded dataset has a `region` column, the advisor might suggest:
 }
 ```
 
-The suggestion is recorded as a `vocabulary_suggestion` Blackboard entry and a human gate asks for approval. It is not written to CSV until a user approves it and regression tests are run.
+The suggestion is recorded as a `vocabulary_suggestion` Blackboard entry, persisted to `runs/vocabulary_suggestions.jsonl`, and shown through a human gate. It is not written to CSV until a user approves it and regression tests are run.
+
+Review commands:
+
+```powershell
+python -m powerbanana.cli vocab list
+python -m powerbanana.cli vocab approve vocab_000001
+python -m powerbanana.cli vocab reject vocab_000001 --note "Rejected after review"
+```
 
 ## Expansion Governance
 
@@ -110,10 +118,11 @@ The safe expansion loop is:
 1. Classifier returns an actual scenario.
 2. Golden case, evaluator, or user feedback identifies the expected scenario.
 3. `LexiconSuggestionBuilder` or an injected advisor records suggested terms with `status = pending_user_approval`.
-4. A user reviews the suggestion.
-5. Approved terms are written into `config/planner_lexicon.csv` or `config/analysis_terms.csv`.
-6. A golden case is added for the question.
-7. Regression tests must pass before the new vocabulary is treated as stable.
+4. A user reviews the pending suggestion with `powerbanana vocab list`.
+5. Approved terms are written into `config/analysis_terms.csv` with `powerbanana vocab approve <suggestion_id>`.
+6. Rejected suggestions remain in the local JSONL audit log and do not change CSV vocabulary.
+7. A golden case is added for the question.
+8. Regression tests must pass before the new vocabulary is treated as stable.
 
 This prevents one accidental input from silently changing Planner behavior for everyone.
 

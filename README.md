@@ -98,6 +98,16 @@ Add scenario terms or metric terms by editing the CSV files and restarting Power
 
 LLM-assisted vocabulary management is candidate-only. When injected, an advisor can suggest a missing term such as `group_by=region`, but PowerBanana only records a `vocabulary_suggestion` and opens a human gate. It never writes the CSV or executes the suggested analysis in the same run.
 
+Review pending vocabulary suggestions:
+
+```powershell
+python -m powerbanana.cli vocab list
+python -m powerbanana.cli vocab approve vocab_000001
+python -m powerbanana.cli vocab reject vocab_000001 --note "Not a stable business term"
+```
+
+Suggestions are stored locally in `runs/vocabulary_suggestions.jsonl`. Approving a suggestion appends it to `config/analysis_terms.csv`; rejecting it keeps the audit record but does not change active vocabulary. After approval, restart PowerBanana and run the tests or golden cases before treating the new term as stable.
+
 ## Extending Evaluation
 
 PowerBanana runs analysis results through an `EvaluationRunner`. You can register your own evaluator without changing the core agent:

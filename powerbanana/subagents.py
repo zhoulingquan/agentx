@@ -275,13 +275,14 @@ class DataAnalysisAgent:
             )
             return
 
+        review_record = self.vocabulary_manager.record_pending(suggestion)
         suggestion_ref = blackboard.record_vocabulary_suggestion(suggestion)
         blackboard.status = "needs_clarification"
         terms = "|".join(suggestion.terms)
         blackboard.answer = (
             "I found a possible new vocabulary term. "
             f"Approve adding {suggestion.kind}={suggestion.value} with terms {terms} "
-            f"to {suggestion.target_csv}?"
+            f"to {suggestion.target_csv}? Suggestion id: {review_record.suggestion_id}."
         )
         blackboard.record_evaluation(
             self.evaluation_runner.evaluate_gate(
