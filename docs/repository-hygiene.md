@@ -18,7 +18,7 @@ PowerBanana keeps tests and synthetic evaluation assets in Git so every machine 
 
 | Pattern | Reason |
 |---|---|
-| `runs/` | Local evaluation snapshots, replay output, and vocabulary suggestion review logs. |
+| `runs/` | Local evaluation snapshots, replay output, vocabulary suggestion review logs, and generated golden case drafts. |
 | `local_data/`, `private_data/`, `user_uploads/` | Real or private datasets should not be committed. |
 | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/` | Tool caches. |
 | `.coverage`, `coverage.xml`, `htmlcov/` | Coverage reports generated locally or in CI. |

@@ -52,11 +52,12 @@ Review suggestions from the CLI:
 
 ```powershell
 python -m powerbanana.cli vocab list
+python -m powerbanana.cli vocab approve vocab_000001 --dry-run
 python -m powerbanana.cli vocab approve vocab_000001
 python -m powerbanana.cli vocab reject vocab_000001 --note "Not needed"
 ```
 
-Approval appends the reviewed term to `config/analysis_terms.csv`. Rejection updates only the local JSONL review log.
+`--dry-run` prints the exact CSV row without mutating files. Approval appends the reviewed term to `config/analysis_terms.csv`, reloads that CSV, records `validation_status` and `validation_output` in the JSONL suggestion record, and writes a local golden case draft under `runs/golden_case_drafts/`. Rejection updates only the local JSONL review log.
 
 ## Extension Direction
 

@@ -59,7 +59,7 @@ Supported:
 - Deterministic candidate planning before DAG execution.
 - Strict plan validation before DAG execution.
 - Governed planner lexicon for scenario classification.
-- Local vocabulary suggestion approval flow for LLM-style candidate terms.
+- Local vocabulary suggestion approval flow with dry-run, validation, and golden case drafts.
 - Task DAG trace, Blackboard events, Step trace, Evaluation result.
 - Golden cases, calibration cases, and replay snapshots.
 

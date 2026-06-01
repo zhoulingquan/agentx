@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
-from .analysis_request import AnalysisTerms, _contains_term, _normalize
+from .analysis_request import AnalysisTermStore, AnalysisTerms, _contains_term, _normalize
 from .models import VocabularySuggestion
 
 
 DEFAULT_SUGGESTION_STORE_PATH = Path("runs") / "vocabulary_suggestions.jsonl"
+DEFAULT_GOLDEN_CASE_DRAFTS_DIR = Path("runs") / "golden_case_drafts"
 PENDING_STATUS = "pending_user_approval"
 APPROVED_STATUS = "approved"
 REJECTED_STATUS = "rejected"
+APPROVED_VALIDATION_FAILED_STATUS = "approved_validation_failed"
 
 
 class LLMVocabularyAdvisor(Protocol):
@@ -51,6 +54,22 @@ class VocabularySuggestionRecord:
     updated_at: str
     suggestion: VocabularySuggestion
     reviewer_note: str = ""
+    validation_status: str = ""
+    validation_output: list[str] = field(default_factory=list)
+    golden_case_draft_path: str = ""
+
+
+@dataclass(frozen=True)
+class VocabularyApprovalPreview:
+    suggestion_id: str
+    csv_line: str
+    suggestion: VocabularySuggestion
+
+
+@dataclass(frozen=True)
+class VocabularyApprovalValidation:
+    passed: bool
+    output: list[str]
 
 
 class VocabularySuggestionValidator:
@@ -83,12 +102,21 @@ class VocabularySuggestionValidator:
 
 
 class VocabularySuggestionStore:
+    def csv_row(self, suggestion: VocabularySuggestion) -> list[str]:
+        return [suggestion.kind, suggestion.value, "|".join(suggestion.terms), "", ""]
+
+    def csv_line(self, suggestion: VocabularySuggestion) -> str:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(self.csv_row(suggestion))
+        return buffer.getvalue().strip()
+
     def append_approved(self, path: Path, suggestion: VocabularySuggestion) -> None:
         if suggestion.status != "approved":
             raise ValueError("Only approved vocabulary suggestions can be appended.")
         with path.open("a", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
-            writer.writerow([suggestion.kind, suggestion.value, "|".join(suggestion.terms), "", ""])
+            writer.writerow(self.csv_row(suggestion))
 
 
 class VocabularySuggestionRepository:
@@ -129,27 +157,49 @@ class VocabularySuggestionRepository:
                 return record
         raise KeyError(f"Unknown vocabulary suggestion id: {suggestion_id}")
 
-    def mark_approved(self, suggestion_id: str, reviewer_note: str = "") -> VocabularySuggestionRecord:
+    def mark_approved(
+        self,
+        suggestion_id: str,
+        reviewer_note: str = "",
+        status: str = APPROVED_STATUS,
+        validation_status: str = "",
+        validation_output: list[str] | None = None,
+        golden_case_draft_path: str = "",
+    ) -> VocabularySuggestionRecord:
         record = self.get_record(suggestion_id)
         if record.status != PENDING_STATUS:
             raise ValueError(f"Vocabulary suggestion {suggestion_id} is already {record.status}.")
-        return self._replace_record(
+        return self._replace_record_with_metadata(
             suggestion_id,
-            status=APPROVED_STATUS,
+            status=status,
             reviewer_note=reviewer_note,
+            validation_status=validation_status,
+            validation_output=validation_output or [],
+            golden_case_draft_path=golden_case_draft_path,
         )
 
     def mark_rejected(self, suggestion_id: str, reviewer_note: str = "") -> VocabularySuggestionRecord:
         record = self.get_record(suggestion_id)
         if record.status != PENDING_STATUS:
             raise ValueError(f"Vocabulary suggestion {suggestion_id} is already {record.status}.")
-        return self._replace_record(
+        return self._replace_record_with_metadata(
             suggestion_id,
             status=REJECTED_STATUS,
             reviewer_note=reviewer_note,
+            validation_status="",
+            validation_output=[],
+            golden_case_draft_path="",
         )
 
-    def _replace_record(self, suggestion_id: str, status: str, reviewer_note: str) -> VocabularySuggestionRecord:
+    def _replace_record_with_metadata(
+        self,
+        suggestion_id: str,
+        status: str,
+        reviewer_note: str,
+        validation_status: str,
+        validation_output: list[str],
+        golden_case_draft_path: str,
+    ) -> VocabularySuggestionRecord:
         records = self.list_records()
         updated_records: list[VocabularySuggestionRecord] = []
         updated_record: VocabularySuggestionRecord | None = None
@@ -162,6 +212,9 @@ class VocabularySuggestionRepository:
                 status=status,
                 updated_at=_utc_now(),
                 reviewer_note=reviewer_note,
+                validation_status=validation_status,
+                validation_output=validation_output,
+                golden_case_draft_path=golden_case_draft_path,
                 suggestion=replace(record.suggestion, status=status),
             )
             updated_records.append(updated_record)
@@ -195,7 +248,23 @@ class VocabularyApprovalService:
         self.repository = repository
         self.suggestion_store = suggestion_store or VocabularySuggestionStore()
 
-    def approve(self, suggestion_id: str, analysis_terms_path: Path, reviewer_note: str = "") -> VocabularySuggestionRecord:
+    def preview(self, suggestion_id: str) -> VocabularyApprovalPreview:
+        record = self.repository.get_record(suggestion_id)
+        if record.status != PENDING_STATUS:
+            raise ValueError(f"Vocabulary suggestion {suggestion_id} is already {record.status}.")
+        return VocabularyApprovalPreview(
+            suggestion_id=record.suggestion_id,
+            csv_line=self.suggestion_store.csv_line(record.suggestion),
+            suggestion=record.suggestion,
+        )
+
+    def approve(
+        self,
+        suggestion_id: str,
+        analysis_terms_path: Path,
+        reviewer_note: str = "",
+        golden_case_drafts_dir: Path | None = None,
+    ) -> VocabularySuggestionRecord:
         record = self.repository.get_record(suggestion_id)
         if record.status != PENDING_STATUS:
             raise ValueError(f"Vocabulary suggestion {suggestion_id} is already {record.status}.")
@@ -203,10 +272,75 @@ class VocabularyApprovalService:
             analysis_terms_path,
             replace(record.suggestion, status=APPROVED_STATUS),
         )
-        return self.repository.mark_approved(suggestion_id, reviewer_note=reviewer_note)
+        validation = self._validate_approved_term(analysis_terms_path, record.suggestion)
+        draft_path = self._write_golden_case_draft(record, golden_case_drafts_dir or DEFAULT_GOLDEN_CASE_DRAFTS_DIR)
+        status = APPROVED_STATUS if validation.passed else APPROVED_VALIDATION_FAILED_STATUS
+        return self.repository.mark_approved(
+            suggestion_id,
+            reviewer_note=reviewer_note,
+            status=status,
+            validation_status="passed" if validation.passed else "failed",
+            validation_output=validation.output,
+            golden_case_draft_path=str(draft_path),
+        )
 
     def reject(self, suggestion_id: str, reviewer_note: str = "") -> VocabularySuggestionRecord:
         return self.repository.mark_rejected(suggestion_id, reviewer_note=reviewer_note)
+
+    def _validate_approved_term(self, analysis_terms_path: Path, suggestion: VocabularySuggestion) -> VocabularyApprovalValidation:
+        output: list[str] = []
+        try:
+            analysis_terms = AnalysisTermStore().load_csv(analysis_terms_path)
+            output.append("analysis_terms_csv_loaded")
+        except Exception as exc:
+            return VocabularyApprovalValidation(False, [f"analysis_terms_csv_load_failed: {exc}"])
+
+        term_groups = {
+            "metric": analysis_terms.metrics,
+            "group_by": analysis_terms.group_by,
+            "rank_direction": analysis_terms.rank_directions,
+        }
+        candidates = term_groups.get(suggestion.kind)
+        if candidates is None:
+            return VocabularyApprovalValidation(False, [*output, f"unsupported_suggestion_kind: {suggestion.kind}"])
+
+        active = next((term for term in candidates if term.value == suggestion.value), None)
+        if active is None:
+            return VocabularyApprovalValidation(False, [*output, f"approved_value_not_active: {suggestion.value}"])
+
+        missing_terms = [term for term in suggestion.terms if term not in active.terms]
+        if missing_terms:
+            return VocabularyApprovalValidation(False, [*output, f"approved_terms_not_active: {'|'.join(missing_terms)}"])
+
+        output.append(f"approved_value_active: {suggestion.kind}={suggestion.value}")
+        output.append(f"approved_terms_active: {'|'.join(suggestion.terms)}")
+        return VocabularyApprovalValidation(True, output)
+
+    def _write_golden_case_draft(self, record: VocabularySuggestionRecord, drafts_dir: Path) -> Path:
+        suggestion = record.suggestion
+        drafts_dir.mkdir(parents=True, exist_ok=True)
+        path = drafts_dir / f"{record.suggestion_id}_{suggestion.kind}_{suggestion.value}.json"
+        payload = {
+            "draft_type": "vocabulary_approval_golden_case",
+            "suggestion_id": record.suggestion_id,
+            "target_csv": suggestion.target_csv,
+            "suggestion": asdict(suggestion),
+            "planner_case_draft": {
+                "case_id": f"{suggestion.value}_{suggestion.kind}_metric_analysis",
+                "question": f"Replace this with a real user question using one of: {'|'.join(suggestion.terms)}",
+                "expected_scenario": "metric_analysis",
+                "expected_min_confidence": 0.8,
+                "expected_matched_signals_contains": suggestion.terms[:1],
+            },
+            "end_to_end_case_draft": {
+                "case_id": f"{suggestion.value}_{suggestion.kind}_metric_question",
+                "dataset_columns_must_include": [suggestion.value],
+                "expected_group_by": suggestion.value,
+                "promotion_note": "Review the draft, add a synthetic CSV fixture, set expected answer fields, then promote into evals/golden_cases.",
+            },
+        }
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return path
 
 
 class VocabularyManager:
@@ -243,6 +377,9 @@ def _record_to_json(record: VocabularySuggestionRecord) -> dict[str, object]:
         "created_at": record.created_at,
         "updated_at": record.updated_at,
         "reviewer_note": record.reviewer_note,
+        "validation_status": record.validation_status,
+        "validation_output": record.validation_output,
+        "golden_case_draft_path": record.golden_case_draft_path,
         "suggestion": asdict(record.suggestion),
     }
 
@@ -257,5 +394,14 @@ def _record_from_json(data: dict[str, object]) -> VocabularySuggestionRecord:
         created_at=str(data.get("created_at", "")),
         updated_at=str(data.get("updated_at", "")),
         reviewer_note=str(data.get("reviewer_note", "")),
+        validation_status=str(data.get("validation_status", "")),
+        validation_output=_string_list(data.get("validation_output")),
+        golden_case_draft_path=str(data.get("golden_case_draft_path", "")),
         suggestion=VocabularySuggestion(**suggestion_data),
     )
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return []

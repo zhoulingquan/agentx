@@ -110,6 +110,7 @@ class PowerBananaCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "vocabulary_suggestions.jsonl"
             terms_path = Path(tmpdir) / "analysis_terms.csv"
+            drafts_dir = Path(tmpdir) / "drafts"
             self.write_pending_suggestion(store_path)
             self.write_terms_csv(terms_path)
             stdout = io.StringIO()
@@ -124,15 +125,52 @@ class PowerBananaCliTests(unittest.TestCase):
                         str(store_path),
                         "--analysis-terms",
                         str(terms_path),
+                        "--golden-drafts",
+                        str(drafts_dir),
                         "--note",
                         "approved by test",
                     ]
                 )
 
             self.assertEqual(exit_code, 0)
-            self.assertIn("approved vocab_000001", stdout.getvalue())
+            text = stdout.getvalue()
+            self.assertIn("approved vocab_000001", text)
+            self.assertIn("validation=passed", text)
+            self.assertIn("golden_case_draft=", text)
             self.assertIn("group_by,region,地区|区域,,", terms_path.read_text(encoding="utf-8"))
-            self.assertEqual(VocabularySuggestionRepository(store_path).get_record("vocab_000001").status, "approved")
+            record = VocabularySuggestionRepository(store_path).get_record("vocab_000001")
+            self.assertEqual(record.status, "approved")
+            self.assertTrue(Path(record.golden_case_draft_path).exists())
+
+    def test_vocab_approve_dry_run_prints_csv_line_without_mutation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "vocabulary_suggestions.jsonl"
+            terms_path = Path(tmpdir) / "analysis_terms.csv"
+            self.write_pending_suggestion(store_path)
+            self.write_terms_csv(terms_path)
+            original = terms_path.read_text(encoding="utf-8")
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = cli.main(
+                    [
+                        "vocab",
+                        "approve",
+                        "vocab_000001",
+                        "--dry-run",
+                        "--store",
+                        str(store_path),
+                        "--analysis-terms",
+                        str(terms_path),
+                    ]
+                )
+
+            text = stdout.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("dry-run vocab_000001", text)
+            self.assertIn("would append group_by,region,地区|区域,,", text)
+            self.assertEqual(terms_path.read_text(encoding="utf-8"), original)
+            self.assertEqual(VocabularySuggestionRepository(store_path).get_record("vocab_000001").status, "pending_user_approval")
 
     def test_vocab_reject_updates_status_without_csv_mutation(self):
         with tempfile.TemporaryDirectory() as tmpdir:

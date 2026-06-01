@@ -102,11 +102,14 @@ Review pending vocabulary suggestions:
 
 ```powershell
 python -m powerbanana.cli vocab list
+python -m powerbanana.cli vocab approve vocab_000001 --dry-run
 python -m powerbanana.cli vocab approve vocab_000001
 python -m powerbanana.cli vocab reject vocab_000001 --note "Not a stable business term"
 ```
 
-Suggestions are stored locally in `runs/vocabulary_suggestions.jsonl`. Approving a suggestion appends it to `config/analysis_terms.csv`; rejecting it keeps the audit record but does not change active vocabulary. After approval, restart PowerBanana and run the tests or golden cases before treating the new term as stable.
+Suggestions are stored locally in `runs/vocabulary_suggestions.jsonl`. `--dry-run` previews the exact CSV row without changing files. Approving a suggestion appends it to `config/analysis_terms.csv`, reloads the CSV to verify the term is active, stores `validation_status` on the suggestion record, and writes a local golden case draft under `runs/golden_case_drafts/`. Rejecting a suggestion keeps the audit record but does not change active vocabulary.
+
+After approval, review the generated golden case draft, promote it into `evals/planner_cases/` or `evals/golden_cases/` when it represents stable expected behavior, then run the tests before treating the new term as stable.
 
 ## Extending Evaluation
 

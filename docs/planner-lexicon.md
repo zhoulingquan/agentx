@@ -107,9 +107,18 @@ Review commands:
 
 ```powershell
 python -m powerbanana.cli vocab list
+python -m powerbanana.cli vocab approve vocab_000001 --dry-run
 python -m powerbanana.cli vocab approve vocab_000001
 python -m powerbanana.cli vocab reject vocab_000001 --note "Rejected after review"
 ```
+
+Approval validation stores three extra fields on the local suggestion record:
+
+| Field | Meaning |
+|---|---|
+| `validation_status` | `passed` or `failed` after approval validation. |
+| `validation_output` | Messages from reloading and checking `config/analysis_terms.csv`. |
+| `golden_case_draft_path` | Local JSON draft under `runs/golden_case_drafts/`. |
 
 ## Expansion Governance
 
@@ -119,10 +128,12 @@ The safe expansion loop is:
 2. Golden case, evaluator, or user feedback identifies the expected scenario.
 3. `LexiconSuggestionBuilder` or an injected advisor records suggested terms with `status = pending_user_approval`.
 4. A user reviews the pending suggestion with `powerbanana vocab list`.
-5. Approved terms are written into `config/analysis_terms.csv` with `powerbanana vocab approve <suggestion_id>`.
-6. Rejected suggestions remain in the local JSONL audit log and do not change CSV vocabulary.
-7. A golden case is added for the question.
-8. Regression tests must pass before the new vocabulary is treated as stable.
+5. The user previews the exact row with `powerbanana vocab approve <suggestion_id> --dry-run`.
+6. Approved terms are written into `config/analysis_terms.csv` with `powerbanana vocab approve <suggestion_id>`.
+7. The approval command validates the CSV and writes a local golden case draft.
+8. Rejected suggestions remain in the local JSONL audit log and do not change CSV vocabulary.
+9. A reviewed golden case is promoted into `evals/` when the behavior should become stable.
+10. Regression tests must pass before the new vocabulary is treated as stable.
 
 This prevents one accidental input from silently changing Planner behavior for everyone.
 

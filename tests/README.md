@@ -21,4 +21,4 @@ python -m unittest discover -s tests
 
 Do not commit generated caches such as `__pycache__`, `.pytest_cache`, coverage output, or local run artifacts.
 
-Planner vocabulary lives in `config/planner_lexicon.csv`; metric extraction vocabulary lives in `config/analysis_terms.csv`. Pending LLM-style vocabulary suggestions live locally in `runs/vocabulary_suggestions.jsonl` and can be reviewed with `python -m powerbanana.cli vocab list`. After approving a suggestion or editing either CSV, run the Planner lexicon and golden case tests.
+Planner vocabulary lives in `config/planner_lexicon.csv`; metric extraction vocabulary lives in `config/analysis_terms.csv`. Pending LLM-style vocabulary suggestions live locally in `runs/vocabulary_suggestions.jsonl` and can be reviewed with `python -m powerbanana.cli vocab list`. Preview approvals with `python -m powerbanana.cli vocab approve vocab_000001 --dry-run`; approved suggestions write local draft files under `runs/golden_case_drafts/`. After approving a suggestion or editing either CSV, run the Planner lexicon and golden case tests.

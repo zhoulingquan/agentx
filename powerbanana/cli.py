@@ -8,7 +8,12 @@ from typing import Any
 
 from .agent import PowerBananaAgent
 from .analysis_request import DEFAULT_ANALYSIS_TERMS_PATH
-from .vocabulary import DEFAULT_SUGGESTION_STORE_PATH, VocabularyApprovalService, VocabularySuggestionRepository
+from .vocabulary import (
+    DEFAULT_GOLDEN_CASE_DRAFTS_DIR,
+    DEFAULT_SUGGESTION_STORE_PATH,
+    VocabularyApprovalService,
+    VocabularySuggestionRepository,
+)
 
 YELLOW = "\033[33m"
 RESET = "\033[0m"
@@ -86,7 +91,11 @@ def _vocab_main(argv: list[str]) -> int:
 
     list_parser = subparsers.add_parser("list", help="List vocabulary suggestions")
     _add_vocabulary_store_options(list_parser)
-    list_parser.add_argument("--status", choices=["pending_user_approval", "approved", "rejected"], help="Filter by review status")
+    list_parser.add_argument(
+        "--status",
+        choices=["pending_user_approval", "approved", "rejected", "approved_validation_failed"],
+        help="Filter by review status",
+    )
 
     approve_parser = subparsers.add_parser("approve", help="Approve a vocabulary suggestion and append it to analysis_terms.csv")
     approve_parser.add_argument("suggestion_id", help="Suggestion id such as vocab_000001")
@@ -96,6 +105,13 @@ def _vocab_main(argv: list[str]) -> int:
         type=Path,
         default=DEFAULT_ANALYSIS_TERMS_PATH,
         help="Path to analysis_terms.csv",
+    )
+    approve_parser.add_argument("--dry-run", action="store_true", help="Preview the CSV row without mutating files")
+    approve_parser.add_argument(
+        "--golden-drafts",
+        type=Path,
+        default=DEFAULT_GOLDEN_CASE_DRAFTS_DIR,
+        help="Directory for local golden case draft JSON files",
     )
     approve_parser.add_argument("--note", default="", help="Reviewer note to store with the decision")
 
@@ -124,8 +140,22 @@ def _vocab_main(argv: list[str]) -> int:
                 )
             return 0
         if args.action == "approve":
-            record = service.approve(args.suggestion_id, args.analysis_terms, reviewer_note=args.note)
-            print(f"approved {record.suggestion_id}: {record.suggestion.kind}={record.suggestion.value}")
+            if args.dry_run:
+                preview = service.preview(args.suggestion_id)
+                print(f"dry-run {preview.suggestion_id}: would append {preview.csv_line}")
+                return 0
+            record = service.approve(
+                args.suggestion_id,
+                args.analysis_terms,
+                reviewer_note=args.note,
+                golden_case_drafts_dir=args.golden_drafts,
+            )
+            print(
+                f"{record.status} {record.suggestion_id}: "
+                f"{record.suggestion.kind}={record.suggestion.value} "
+                f"validation={record.validation_status} "
+                f"golden_case_draft={record.golden_case_draft_path}"
+            )
             return 0
         if args.action == "reject":
             record = service.reject(args.suggestion_id, reviewer_note=args.note)
