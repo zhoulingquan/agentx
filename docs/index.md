@@ -55,10 +55,11 @@ Supported:
 - CSV files.
 - Simple XLSX files when `openpyxl` is installed.
 - Single-table metric ranking for conversion rate, revenue, orders, and visits.
-- Deterministic no-LLM execution.
+- Deterministic no-LLM execution by default.
 - Deterministic candidate planning before DAG execution.
 - Strict plan validation before DAG execution.
 - Governed planner lexicon for scenario classification.
+- Optional real LLM vocabulary advisor for candidate-only missing-term suggestions.
 - Local vocabulary suggestion approval flow with dry-run, validation, golden case drafts, Planner promotion, and end-to-end golden promotion.
 - Task DAG trace, Blackboard events, Step trace, Evaluation result.
 - Golden cases, calibration cases, and replay snapshots.

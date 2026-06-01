@@ -24,7 +24,7 @@ The runtime now includes the first governance pieces from the v0.3 design:
 - `DeterministicDataFilePlanner` creates a candidate Task Plan before any DAG execution.
 - `PlannerClassifier` maps user questions to known scenarios with the user-editable `config/planner_lexicon.csv`.
 - `AnalysisRequestParser` maps supported metric terms from `config/analysis_terms.csv` into structured analysis requests.
-- `LLMVocabularyAdvisor` can propose missing vocabulary terms, but suggestions require validation and user approval before CSV changes.
+- `LLMVocabularyAdvisor` can propose missing vocabulary terms. The real LLM adapter is optional, off by default, and suggestions require validation and user approval before CSV changes.
 - `PlannerIntentEvaluator` checks Planner intent consistency and blocks DAG execution when planning is unsafe.
 - Planner routing returns clarification for ambiguous, unsupported, or unknown scenarios before loading the dataset.
 - `PlanValidator` rejects malformed plans, including empty plans, cycles, duplicate dependencies, disconnected roots, and scenario pattern mismatches.
@@ -96,7 +96,27 @@ config/analysis_terms.csv
 
 Add scenario terms or metric terms by editing the CSV files and restarting PowerBanana.
 
-LLM-assisted vocabulary management is candidate-only. When injected, an advisor can suggest a missing term such as `group_by=region`, but PowerBanana only records a `vocabulary_suggestion` and opens a human gate. It never writes the CSV or executes the suggested analysis in the same run.
+LLM-assisted vocabulary management is candidate-only. When enabled, an advisor can suggest a missing term such as `group_by=region`, but PowerBanana only records a `vocabulary_suggestion` and opens a human gate. It never writes the CSV or executes the suggested analysis in the same run.
+
+Enable the real OpenAI-compatible JSON advisor for CLI runs:
+
+```powershell
+$env:POWERBANANA_VOCAB_ADVISOR = "openai"
+$env:OPENAI_API_KEY = "<your-api-key>"
+$env:POWERBANANA_VOCAB_MODEL = "gpt-4o-mini"
+python -m powerbanana.cli path\to\data.csv "哪个地区收入最高？"
+```
+
+Optional settings:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `POWERBANANA_VOCAB_ADVISOR` | empty / disabled | Set to `openai` to enable the LLM candidate source. |
+| `OPENAI_API_KEY` | required when enabled | API key used by the OpenAI-compatible Responses endpoint. |
+| `POWERBANANA_VOCAB_MODEL` | `gpt-4o-mini` | Model used for JSON vocabulary suggestions. |
+| `POWERBANANA_VOCAB_BASE_URL` | `https://api.openai.com/v1` | Override for compatible gateways. |
+| `POWERBANANA_VOCAB_TIMEOUT_SECONDS` | `30` | HTTP timeout. |
+| `POWERBANANA_VOCAB_MAX_TOKENS` | `500` | Maximum JSON output tokens. |
 
 Review pending vocabulary suggestions:
 
@@ -200,7 +220,7 @@ Supported in v0.1:
 - Simple XLSX files when `openpyxl` is installed.
 - Single-table analysis.
 - Channel ranking for conversion rate, revenue, orders, and visits.
-- LLM-style vocabulary suggestions with human approval gates.
+- Optional real LLM vocabulary suggestions with human approval gates.
 - Step trace and deterministic evaluation.
 
 Not supported yet:

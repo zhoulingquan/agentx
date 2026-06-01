@@ -6,11 +6,11 @@ from .blackboard import TaskBlackboard
 from .dag import TaskDagExecutor
 from .evaluation import EvaluationRunner
 from .llm import default_llm_settings
-from .models import PowerBananaReport
+from .models import LLMSettings, PowerBananaReport
 from .plan import PlanValidator
 from .planner import DeterministicDataFilePlanner, Planner
 from .subagents import DataAnalysisAgent, DataProfileAgent, ReportAgent
-from .vocabulary import LLMVocabularyAdvisor
+from .vocabulary import LLMVocabularyAdvisor, NullVocabularyAdvisor
 
 
 EXECUTABLE_PLANNER_SCENARIOS = {"metric_analysis", "conversion_rate_analysis"}
@@ -55,11 +55,12 @@ class PowerBananaAgent:
         )
         self.report_agent = report_agent or ReportAgent()
         self.planner = planner or DeterministicDataFilePlanner()
+        self.llm_settings = self._llm_settings_for_vocabulary_advisor(vocabulary_advisor)
 
     def answer(self, file_path: str | Path, question: str) -> PowerBananaReport:
         path = Path(file_path)
         blackboard = TaskBlackboard(question=question)
-        blackboard.llm_settings = default_llm_settings()
+        blackboard.llm_settings = self.llm_settings
         planner_result = self.planner.plan(path, question)
         blackboard.record_planner_trace(planner_result.trace)
         blackboard.record_planner_evaluation(self.evaluation_runner.evaluate_planner_trace(blackboard))
@@ -92,6 +93,17 @@ class PowerBananaAgent:
         else:
             scenario_id = "unknown"
         return scenario_id not in EXECUTABLE_PLANNER_SCENARIOS
+
+    def _llm_settings_for_vocabulary_advisor(self, vocabulary_advisor: LLMVocabularyAdvisor | None) -> LLMSettings:
+        if vocabulary_advisor is None or isinstance(vocabulary_advisor, NullVocabularyAdvisor):
+            return default_llm_settings()
+        return LLMSettings(
+            provider=str(getattr(vocabulary_advisor, "provider", "external_vocabulary_advisor")),
+            model=str(getattr(vocabulary_advisor, "model", "unknown")),
+            temperature=float(getattr(vocabulary_advisor, "temperature", 0.0)),
+            mode="vocabulary_suggestion_only",
+            max_tokens=int(getattr(vocabulary_advisor, "max_tokens", 0)),
+        )
 
     def _planner_routed_report(self, blackboard: TaskBlackboard) -> PowerBananaReport:
         if blackboard.planner_trace is None or blackboard.planner_evaluation is None:

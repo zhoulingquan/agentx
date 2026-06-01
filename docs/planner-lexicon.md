@@ -83,7 +83,7 @@ After editing either CSV, restart PowerBanana and run the planner golden cases p
 
 ## LLM-Assisted Suggestions
 
-When `AnalysisRequestParser` recognizes a metric but cannot identify the grouping field from `config/analysis_terms.csv`, PowerBanana can ask an injected `LLMVocabularyAdvisor` for a candidate term. This is designed for cases like:
+When `AnalysisRequestParser` recognizes a metric but cannot identify the grouping field from `config/analysis_terms.csv`, PowerBanana can ask an injected `LLMVocabularyAdvisor` for a candidate term. The real OpenAI-compatible adapter is available through environment variables and is disabled by default. This is designed for cases like:
 
 ```text
 哪个地区收入最高？
@@ -102,6 +102,36 @@ If the uploaded dataset has a `region` column, the advisor might suggest:
 ```
 
 The suggestion is recorded as a `vocabulary_suggestion` Blackboard entry, persisted to `runs/vocabulary_suggestions.jsonl`, and shown through a human gate. It is not written to CSV until a user approves it and regression tests are run.
+
+Enable the real JSON advisor for CLI runs:
+
+```powershell
+$env:POWERBANANA_VOCAB_ADVISOR = "openai"
+$env:OPENAI_API_KEY = "<your-api-key>"
+$env:POWERBANANA_VOCAB_MODEL = "gpt-4o-mini"
+python -m powerbanana.cli path\to\data.csv "哪个地区收入最高？"
+```
+
+The adapter sends the user question, dataset columns, and active `analysis_terms.csv` entries to a structured JSON endpoint. It expects one response object with `should_suggest` and a single `group_by` suggestion. PowerBanana then validates the suggestion locally:
+
+| Guard | Effect |
+|---|---|
+| Suggested `value` must exist in the uploaded dataset columns | Blocks hallucinated fields. |
+| Suggested `kind` must be `group_by` | Keeps the first LLM scope narrow. |
+| Suggested `terms` must not already be active | Avoids duplicate CSV rows. |
+| Suggestion status is forced to `pending_user_approval` | Prevents direct CSV mutation. |
+
+Supported environment variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `POWERBANANA_VOCAB_ADVISOR` | empty / disabled | Set to `openai` to enable the LLM candidate source. |
+| `OPENAI_API_KEY` | required when enabled | API key for the OpenAI-compatible Responses endpoint. |
+| `POWERBANANA_VOCAB_MODEL` | `gpt-4o-mini` | Model used for structured vocabulary suggestions. |
+| `POWERBANANA_VOCAB_BASE_URL` | `https://api.openai.com/v1` | Override for compatible gateways. |
+| `POWERBANANA_VOCAB_TIMEOUT_SECONDS` | `30` | HTTP timeout. |
+| `POWERBANANA_VOCAB_TEMPERATURE` | `0` | Sampling temperature for suggestions. |
+| `POWERBANANA_VOCAB_MAX_TOKENS` | `500` | Maximum JSON output tokens. |
 
 Review commands:
 

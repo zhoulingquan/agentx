@@ -9,6 +9,7 @@ from typing import Any
 from .agent import PowerBananaAgent
 from .analysis_request import DEFAULT_ANALYSIS_TERMS_PATH, default_analysis_terms
 from .golden_promotion import GoldenCasePromoter
+from .llm import vocabulary_advisor_from_env
 from .planner import DeterministicDataFilePlanner
 from .vocabulary import (
     DEFAULT_GOLDEN_CASE_DRAFTS_DIR,
@@ -59,7 +60,7 @@ def interactive_loop() -> int:
     print(yellow_logo())
     print("PowerBanana v0.1 interactive data analysis CLI")
     print("Type q at the file prompt to exit.")
-    agent = PowerBananaAgent()
+    agent = PowerBananaAgent(vocabulary_advisor=vocabulary_advisor_from_env())
 
     while True:
         file_value = input("Dataset file (.csv or simple .xlsx): ").strip()
@@ -281,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.file is None or args.question is None:
         parser.error("file and question are required unless --interactive is used")
 
-    report = PowerBananaAgent().answer(args.file, args.question)
+    report = PowerBananaAgent(vocabulary_advisor=vocabulary_advisor_from_env()).answer(args.file, args.question)
     print(json.dumps(report, default=_json_default, ensure_ascii=False, indent=2))
     return 0 if report.status in {"completed", "needs_clarification", "partial"} else 1
 
