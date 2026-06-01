@@ -65,18 +65,20 @@ class AnalysisRequestParser:
     def __init__(self, terms: AnalysisTerms) -> None:
         self.terms = terms
 
-    def parse(self, question: str) -> AnalysisRequest:
-        request = self.parse_optional(question)
+    def parse(self, question: str, allow_default_group_by: bool = True) -> AnalysisRequest:
+        request = self.parse_optional(question, allow_default_group_by=allow_default_group_by)
         if request is None:
             raise ValueError("Could not parse analysis request from question.")
         return request
 
-    def parse_optional(self, question: str) -> AnalysisRequest | None:
+    def parse_optional(self, question: str, allow_default_group_by: bool = True) -> AnalysisRequest | None:
         normalized_question = _normalize(question)
         metric = _first_match(self.terms.metrics, normalized_question)
         if metric is None:
             return None
-        group_by = _first_match(self.terms.group_by, normalized_question) or _single_default(self.terms.group_by)
+        group_by = _first_match(self.terms.group_by, normalized_question)
+        if group_by is None and allow_default_group_by:
+            group_by = _single_default(self.terms.group_by)
         if group_by is None:
             return None
         rank_direction = _first_match(self.terms.rank_directions, normalized_question)

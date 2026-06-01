@@ -28,6 +28,16 @@ class AnalysisRequestTests(unittest.TestCase):
         self.assertEqual(request.rank_direction, "lowest")
         self.assertEqual(request.required_columns, ["channel", "orders"])
 
+    def test_strict_parse_leaves_unknown_group_by_for_vocabulary_suggestion(self):
+        parser = AnalysisRequestParser(default_analysis_terms())
+
+        request = parser.parse_optional(
+            "Which region has the highest revenue?",
+            allow_default_group_by=False,
+        )
+
+        self.assertIsNone(request)
+
     def test_user_csv_terms_can_extend_metric_vocabulary(self):
         handle = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8", newline="")
         with handle:

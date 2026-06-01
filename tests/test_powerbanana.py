@@ -12,6 +12,20 @@ from powerbanana.evaluation import (
     ReplayRunner,
     default_evaluator_registry,
 )
+from powerbanana.models import VocabularySuggestion
+
+
+class FakeVocabularyAdvisor:
+    def suggest(self, question, dataset_columns, analysis_terms):
+        return VocabularySuggestion(
+            target_csv="config/analysis_terms.csv",
+            kind="group_by",
+            value="region",
+            terms=["地区", "区域"],
+            reason="missing_group_by_term",
+            source="fake_llm",
+            confidence=0.8,
+        )
 
 
 class RowCountWarningEvaluator:
@@ -105,6 +119,30 @@ class PowerBananaAgentTests(unittest.TestCase):
         self.assertEqual(visits.status, "completed")
         self.assertEqual(visits.answer, "organic has the lowest visits at 80.00.")
         self.assertEqual(visits.analysis_result.top_value, "organic")
+
+    def test_requests_approval_for_llm_suggested_group_by_vocabulary(self):
+        path = self.write_csv(
+            [
+                {"region": "north", "revenue": "500"},
+                {"region": "south", "revenue": "900"},
+            ]
+        )
+
+        report = PowerBananaAgent(vocabulary_advisor=FakeVocabularyAdvisor()).answer(
+            path,
+            "哪个地区收入最高？",
+        )
+
+        self.assertEqual(report.status, "needs_clarification")
+        self.assertIsNotNone(report.dataset_snapshot)
+        self.assertIsNone(report.analysis_result)
+        self.assertEqual(report.step_trace, [])
+        self.assertEqual(report.vocabulary_suggestions[0].value, "region")
+        self.assertEqual(report.vocabulary_suggestions[0].status, "pending_user_approval")
+        self.assertEqual(report.human_gates[0].reason, "vocabulary_suggestion")
+        self.assertIn("analysis_terms.csv", report.answer)
+        self.assertIn("region", report.answer)
+        self.assertIn("vocabulary_suggestion", [entry.entry_type for entry in report.blackboard_entries])
 
     def test_requests_clarification_when_metric_is_ambiguous(self):
         path = self.write_csv(

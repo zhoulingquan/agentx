@@ -13,6 +13,7 @@ The current implementation is deterministic and does not call an LLM. It classif
 | Planner evaluation | `PlannerIntentEvaluator` | `planner_evaluation` | Checks intent consistency, confidence, and required warnings. |
 | Planner gate | `PowerBananaAgent` | `blocked` report or continued execution | Blocks before validation and DAG execution when planner evaluation returns `block`. |
 | Planner routing | `PowerBananaAgent` | `planner_routing_gate` | Routes ambiguous, unsupported, or unknown scenarios to `needs_clarification` before dataset loading. |
+| Vocabulary suggestion | `DataAnalysisAgent` | `vocabulary_suggestion_gate` | Uses an injected advisor only when metric analysis needs a missing vocabulary term. |
 | Validation | `PlanValidator` | Frozen `TaskPlan` | Rejects malformed plans before execution. |
 | Scheduling | `TaskDagExecutor.from_plan` | DAG trace | Builds executors only from frozen plans. |
 | Reporting | `ReportAgent` | `PowerBananaReport` | Includes both `task_plan` and `planner_trace`. |
@@ -24,6 +25,7 @@ The current implementation is deterministic and does not call an LLM. It classif
 - It sets `planner_mode` to `deterministic_no_llm`.
 - It loads `config/planner_lexicon.csv` at startup and classifies questions into known scenarios through `PlannerClassifier`.
 - It loads `config/analysis_terms.csv` and parses `AnalysisRequest` for executable `metric_analysis` questions.
+- If a metric is recognized but the grouping field is missing from the active vocabulary, it records `needs_vocabulary_suggestion` for the analysis stage.
 - It emits a candidate plan for `data_profile_agent -> data_analysis_agent -> report_agent`.
 - It does not execute tools, read data, mutate files, or decide final answers.
 - It writes an auditable `planner_trace` Blackboard entry with `intent`, `confidence`, matched signals, warnings, and lexicon version before validation.
@@ -32,6 +34,19 @@ The current implementation is deterministic and does not call an LLM. It classif
 - If the intent is not executable, PowerBanana records a `planner_routing_gate`, creates a clarification gate, and returns without loading the dataset or running DAG nodes.
 
 This gives PowerBanana the same architectural slot that a future LLM planner will use, without introducing model nondeterminism yet.
+
+## LLM-Assisted Vocabulary
+
+PowerBanana can accept an injected `LLMVocabularyAdvisor`. The advisor is a candidate generator only: it receives the user question, uploaded dataset columns, and active analysis terms, then may propose a `VocabularySuggestion`.
+
+The suggestion must pass deterministic validation before it is shown to the user:
+
+- The target must be `config/analysis_terms.csv`.
+- The suggestion kind must be supported.
+- The suggested value must exist in the dataset columns.
+- The suggested terms must not already be active.
+
+Accepted suggestions are recorded on the Blackboard and returned through a human approval gate. They are not written to CSV automatically and are not executed as an analysis request in the same run.
 
 ## Extension Direction
 

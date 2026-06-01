@@ -24,6 +24,7 @@ The runtime now includes the first governance pieces from the v0.3 design:
 - `DeterministicDataFilePlanner` creates a candidate Task Plan before any DAG execution.
 - `PlannerClassifier` maps user questions to known scenarios with the user-editable `config/planner_lexicon.csv`.
 - `AnalysisRequestParser` maps supported metric terms from `config/analysis_terms.csv` into structured analysis requests.
+- `LLMVocabularyAdvisor` can propose missing vocabulary terms, but suggestions require validation and user approval before CSV changes.
 - `PlannerIntentEvaluator` checks Planner intent consistency and blocks DAG execution when planning is unsafe.
 - Planner routing returns clarification for ambiguous, unsupported, or unknown scenarios before loading the dataset.
 - `PlanValidator` rejects malformed plans, including empty plans, cycles, duplicate dependencies, disconnected roots, and scenario pattern mismatches.
@@ -94,6 +95,8 @@ config/analysis_terms.csv
 ```
 
 Add scenario terms or metric terms by editing the CSV files and restarting PowerBanana.
+
+LLM-assisted vocabulary management is candidate-only. When injected, an advisor can suggest a missing term such as `group_by=region`, but PowerBanana only records a `vocabulary_suggestion` and opens a human gate. It never writes the CSV or executes the suggested analysis in the same run.
 
 ## Extending Evaluation
 
@@ -182,6 +185,7 @@ Supported in v0.1:
 - Simple XLSX files when `openpyxl` is installed.
 - Single-table analysis.
 - Channel ranking for conversion rate, revenue, orders, and visits.
+- LLM-style vocabulary suggestions with human approval gates.
 - Step trace and deterministic evaluation.
 
 Not supported yet:

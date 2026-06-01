@@ -152,6 +152,18 @@ class HumanGateRecord:
 
 
 @dataclass(frozen=True)
+class VocabularySuggestion:
+    target_csv: str
+    kind: str
+    value: str
+    terms: list[str]
+    reason: str
+    source: str
+    confidence: float
+    status: str = "pending_user_approval"
+
+
+@dataclass(frozen=True)
 class ToolCallRecord:
     tool_id: str
     status: str
@@ -241,6 +253,7 @@ class PowerBananaReport:
     step_plan: StepPlan | None = None
     artifact_versions: dict[str, int] = field(default_factory=dict)
     human_gates: list[HumanGateRecord] = field(default_factory=list)
+    vocabulary_suggestions: list[VocabularySuggestion] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     context_bundle: ContextBundle | None = None
     memory_records: list[MemoryRecord] = field(default_factory=list)

@@ -21,6 +21,7 @@ from .models import (
     StepRecord,
     TaskPlan,
     ToolCallRecord,
+    VocabularySuggestion,
 )
 
 
@@ -47,6 +48,7 @@ class TaskBlackboard:
     entries: list[BlackboardEntry] = field(default_factory=list)
     artifact_versions: dict[str, int] = field(default_factory=dict)
     human_gates: list[HumanGateRecord] = field(default_factory=list)
+    vocabulary_suggestions: list[VocabularySuggestion] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     context_bundle: ContextBundle | None = None
     memory_records: list[MemoryRecord] = field(default_factory=list)
@@ -226,6 +228,26 @@ class TaskBlackboard:
         self.human_gates.append(record)
         self.append_event("human_gate_created", "human_gate", f"gate://{record.gate_id}", {"gate_type": gate_type, "reason": reason})
         return record
+
+    def record_vocabulary_suggestion(self, suggestion: VocabularySuggestion, actor_id: str = "vocabulary_manager") -> str:
+        self.vocabulary_suggestions.append(suggestion)
+        target_ref = f"blackboard://{self.task_id}/vocabulary_suggestions/suggestion_{len(self.vocabulary_suggestions):03d}"
+        self.write_entry(
+            entry_type="vocabulary_suggestion",
+            owner_agent_id=actor_id,
+            source_ref=f"vocabulary://{suggestion.source}",
+            target_ref=target_ref,
+            payload=suggestion,
+            visibility_scope=["task", "planning", "human_review"],
+            confidence=suggestion.confidence,
+        )
+        self.append_event(
+            "vocabulary_suggestion_recorded",
+            actor_id,
+            target_ref,
+            {"kind": suggestion.kind, "value": suggestion.value, "status": suggestion.status},
+        )
+        return target_ref
 
     def _serialize_payload(self, value: Any) -> Any:
         if is_dataclass(value):

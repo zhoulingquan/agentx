@@ -8,6 +8,7 @@ The layer now evaluates three targets:
 |---|---|---|
 | Planner trace | `EvaluationRunner.evaluate_planner_trace` | `planner_evaluation` |
 | Planner routing gate | `EvaluationRunner.evaluate_gate` | `evaluation` |
+| Vocabulary suggestion gate | `EvaluationRunner.evaluate_gate` | `evaluation` |
 | Analysis result | `EvaluationRunner.evaluate_analysis` | `evaluation` |
 
 ## Default Evaluators
@@ -32,11 +33,13 @@ The layer now evaluates three targets:
 - A known non-`unknown` scenario has confidence below `0.5`.
 - `unsupported_*` scenarios do not carry `unsupported_capability`.
 - `ambiguous_metric` does not carry `missing_metric`.
-- `metric_analysis` scenarios do not include an `AnalysisRequest`.
+- `metric_analysis` scenarios do not include an `AnalysisRequest`, unless the Planner explicitly marks `needs_vocabulary_suggestion`.
 
 Planner evaluation is recorded separately as `planner_evaluation`, so final answer evaluation remains focused on the analysis result. If planner evaluation returns `block`, PowerBanana returns a blocked report immediately and does not validate the candidate plan, load the dataset, or run DAG nodes.
 
 After planner evaluation passes, `PowerBananaAgent` treats `metric_analysis` as the executable v0.1 scenario. `ambiguous_metric`, `unsupported_*`, and `unknown` scenarios record a `planner_routing_gate` evaluation with `needs_clarification`, create a human clarification gate, and return before dataset loading or DAG execution.
+
+If the Planner marks `needs_vocabulary_suggestion`, PowerBanana profiles the dataset, asks the injected vocabulary advisor for a candidate, validates it, then records a `vocabulary_suggestion_gate` with `needs_clarification`. The analysis is not executed until the vocabulary has been approved and added.
 
 ## Gate Actions
 

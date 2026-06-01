@@ -20,6 +20,8 @@ from .models import (
 from .policies import AutonomyPolicy, default_data_analysis_policy
 from .skills import SkillRegistry, build_default_skill_registry, metric_step_trace
 from .tools import ToolGateway
+from .analysis_request import default_analysis_terms
+from .vocabulary import LLMVocabularyAdvisor, VocabularyManager
 
 
 PROMPT_INJECTION_PATTERNS = (
@@ -84,17 +86,26 @@ class DataAnalysisAgent:
         autonomy_policy: AutonomyPolicy | None = None,
         context_manager: ContextManager | None = None,
         evaluation_runner: EvaluationRunner | None = None,
+        vocabulary_advisor: LLMVocabularyAdvisor | None = None,
+        vocabulary_manager: VocabularyManager | None = None,
     ) -> None:
         self.skill_registry = skill_registry or build_default_skill_registry()
         self.autonomy_policy = autonomy_policy or default_data_analysis_policy()
         self.context_manager = context_manager or ContextManager()
         self.evaluation_runner = evaluation_runner or EvaluationRunner()
+        self.vocabulary_manager = vocabulary_manager or VocabularyManager(
+            advisor=vocabulary_advisor,
+            analysis_terms=default_analysis_terms(),
+        )
 
     def run(self, blackboard: TaskBlackboard) -> None:
         self.context_manager.build_analysis_context(blackboard)
         request = self._analysis_request(blackboard)
         if request is not None:
             self._answer_metric(blackboard, request)
+            return
+        if self._needs_vocabulary_suggestion(blackboard):
+            self._request_vocabulary_approval(blackboard)
             return
         question = blackboard.question
         if self._is_ambiguous_performance_question(question):
@@ -230,6 +241,71 @@ class DataAnalysisAgent:
             return None
         return blackboard.planner_trace.analysis_request
 
+    def _needs_vocabulary_suggestion(self, blackboard: TaskBlackboard) -> bool:
+        if blackboard.planner_trace is None:
+            return False
+        return "needs_vocabulary_suggestion" in blackboard.planner_trace.warnings
+
+    def _request_vocabulary_approval(self, blackboard: TaskBlackboard) -> None:
+        snapshot = self._require_snapshot(blackboard)
+        suggestion, validation = self.vocabulary_manager.suggest(blackboard.question, snapshot.columns)
+        if suggestion is None:
+            blackboard.status = "needs_clarification"
+            blackboard.answer = "Please specify the grouping field to analyze, such as channel, region, product, or campaign."
+            blackboard.record_evaluation(
+                self.evaluation_runner.evaluate_gate(
+                    blackboard,
+                    verdict="needs_clarification",
+                    failure_reasons=validation.failure_reasons,
+                    gate_action="needs_clarification",
+                    target_type="vocabulary_suggestion_gate",
+                    target_ref="blackboard://task_001/vocabulary_suggestions/missing_group_by",
+                )
+            )
+            blackboard.create_human_gate(
+                "clarification",
+                "missing_group_by",
+                "Please specify the grouping field to analyze.",
+            )
+            blackboard.record_agent(
+                self.profile.agent_id,
+                self.profile.runtime_mode,
+                "needs_clarification",
+                "blackboard://task_001/vocabulary_suggestions/missing_group_by",
+            )
+            return
+
+        suggestion_ref = blackboard.record_vocabulary_suggestion(suggestion)
+        blackboard.status = "needs_clarification"
+        terms = "|".join(suggestion.terms)
+        blackboard.answer = (
+            "I found a possible new vocabulary term. "
+            f"Approve adding {suggestion.kind}={suggestion.value} with terms {terms} "
+            f"to {suggestion.target_csv}?"
+        )
+        blackboard.record_evaluation(
+            self.evaluation_runner.evaluate_gate(
+                blackboard,
+                verdict="needs_clarification",
+                failure_reasons=["vocabulary_suggestion_requires_approval"],
+                gate_action="needs_clarification",
+                target_type="vocabulary_suggestion_gate",
+                target_ref=suggestion_ref,
+                scores={"vocabulary_suggestion": suggestion.confidence},
+            )
+        )
+        blackboard.create_human_gate(
+            "clarification",
+            "vocabulary_suggestion",
+            blackboard.answer,
+        )
+        blackboard.record_agent(
+            self.profile.agent_id,
+            self.profile.runtime_mode,
+            "needs_clarification",
+            suggestion_ref,
+        )
+
     def _format_answer(self, top_value: str, value: float, request: AnalysisRequest) -> str:
         formatted_value = f"{value:.2%}" if request.metric == "conversion_rate" else f"{value:.2f}"
         return f"{top_value} has the {request.rank_direction} {request.metric} at {formatted_value}."
@@ -307,6 +383,7 @@ class ReportAgent:
             step_plan=blackboard.step_plan,
             artifact_versions=blackboard.artifact_versions,
             human_gates=blackboard.human_gates,
+            vocabulary_suggestions=blackboard.vocabulary_suggestions,
             tool_calls=blackboard.tool_calls,
             context_bundle=blackboard.context_bundle,
             memory_records=blackboard.memory_records,

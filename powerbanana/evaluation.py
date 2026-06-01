@@ -457,11 +457,15 @@ class PlannerIntentEvaluator:
                 failures.append("missing_metric_warning")
                 blocking_issues.append("missing_metric_warning")
                 score = 0.0
-            if intent.scenario_id in {"metric_analysis", "conversion_rate_analysis"} and trace.analysis_request is None:
+            if (
+                intent.scenario_id in {"metric_analysis", "conversion_rate_analysis"}
+                and trace.analysis_request is None
+                and "needs_vocabulary_suggestion" not in trace.warnings
+            ):
                 failures.append("missing_analysis_request")
                 blocking_issues.append("missing_analysis_request")
                 score = 0.0
-            warnings = intent.warnings
+            warnings = [*intent.warnings, *[warning for warning in trace.warnings if warning not in intent.warnings]]
 
         return EvaluatorOutcome(
             evaluator_id=self.evaluator_id,

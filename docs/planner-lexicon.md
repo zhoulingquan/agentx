@@ -13,6 +13,8 @@ The lexicon is not just a keyword list. It combines scenario rules, phrase group
 | `PlannerClassifier` | Matches a user question against the lexicon and returns `PlannerIntent`. |
 | `LexiconStore` | Loads `config/planner_lexicon.csv` and builds scenario rules. |
 | `LexiconSuggestionBuilder` | Records proposed terms from misclassified questions as `pending_review`. |
+| `LLMVocabularyAdvisor` | Optional candidate source for missing analysis terms. |
+| `VocabularySuggestionValidator` | Checks suggested terms before user approval. |
 
 ## Built-In Scenarios
 
@@ -79,15 +81,37 @@ rank_direction,lowest,lowest|fewest|least,,
 
 After editing either CSV, restart PowerBanana and run the planner golden cases plus end-to-end golden cases.
 
+## LLM-Assisted Suggestions
+
+When `AnalysisRequestParser` recognizes a metric but cannot identify the grouping field from `config/analysis_terms.csv`, PowerBanana can ask an injected `LLMVocabularyAdvisor` for a candidate term. This is designed for cases like:
+
+```text
+哪个地区收入最高？
+```
+
+If the uploaded dataset has a `region` column, the advisor might suggest:
+
+```json
+{
+  "target_csv": "config/analysis_terms.csv",
+  "kind": "group_by",
+  "value": "region",
+  "terms": ["地区", "区域"],
+  "status": "pending_user_approval"
+}
+```
+
+The suggestion is recorded as a `vocabulary_suggestion` Blackboard entry and a human gate asks for approval. It is not written to CSV until a user approves it and regression tests are run.
+
 ## Expansion Governance
 
 The safe expansion loop is:
 
 1. Classifier returns an actual scenario.
 2. Golden case, evaluator, or user feedback identifies the expected scenario.
-3. `LexiconSuggestionBuilder` records suggested terms with `status = pending_review`.
+3. `LexiconSuggestionBuilder` or an injected advisor records suggested terms with `status = pending_user_approval`.
 4. A user reviews the suggestion.
-5. Approved terms are written into `config/planner_lexicon.csv`.
+5. Approved terms are written into `config/planner_lexicon.csv` or `config/analysis_terms.csv`.
 6. A golden case is added for the question.
 7. Regression tests must pass before the new vocabulary is treated as stable.
 

@@ -28,12 +28,15 @@ Each entry includes:
 | `artifact` | `data_profile_agent`, `data_analysis_agent` | `blackboard://task_001/artifacts/analysis_result_v1` |
 | `security_finding` | `data_profile_agent` | `blackboard://task_001/security_findings/security_finding_001` |
 | `evaluation` | `evaluation_layer` | `blackboard://task_001/artifacts/analysis_result_v1` |
+| `vocabulary_suggestion` | `vocabulary_manager` | `blackboard://task_001/vocabulary_suggestions/suggestion_001` |
 
 ## Relationship To Events
 
 Events answer "what happened and when." Entries answer "what structured fact now exists." Every entry has an `audit_ref` pointing to an `entry_written` event.
 
 When planner evaluation blocks execution, the event log includes `planner_blocked`. When planner routing returns clarification for a non-executable scenario, the event log includes `planner_routed`. In both paths no dataset snapshot, agent trace, DAG trace, or analysis artifact is produced.
+
+When an LLM-style advisor proposes a new vocabulary term, the event log includes `vocabulary_suggestion_recorded` and `human_gate_created`. In that path the dataset may be profiled, but no analysis artifact is produced until the suggestion is approved and added to the CSV vocabulary.
 
 ## Why This Matters
 

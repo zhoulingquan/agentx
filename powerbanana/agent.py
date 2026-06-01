@@ -10,6 +10,7 @@ from .models import PowerBananaReport
 from .plan import PlanValidator
 from .planner import DeterministicDataFilePlanner, Planner
 from .subagents import DataAnalysisAgent, DataProfileAgent, ReportAgent
+from .vocabulary import LLMVocabularyAdvisor
 
 
 EXECUTABLE_PLANNER_SCENARIOS = {"metric_analysis", "conversion_rate_analysis"}
@@ -44,10 +45,14 @@ class PowerBananaAgent:
         report_agent: ReportAgent | None = None,
         evaluation_runner: EvaluationRunner | None = None,
         planner: Planner | None = None,
+        vocabulary_advisor: LLMVocabularyAdvisor | None = None,
     ) -> None:
         self.evaluation_runner = evaluation_runner or EvaluationRunner()
         self.data_profile_agent = data_profile_agent or DataProfileAgent()
-        self.data_analysis_agent = data_analysis_agent or DataAnalysisAgent(evaluation_runner=self.evaluation_runner)
+        self.data_analysis_agent = data_analysis_agent or DataAnalysisAgent(
+            evaluation_runner=self.evaluation_runner,
+            vocabulary_advisor=vocabulary_advisor,
+        )
         self.report_agent = report_agent or ReportAgent()
         self.planner = planner or DeterministicDataFilePlanner()
 
@@ -147,6 +152,7 @@ class PowerBananaAgent:
             step_plan=blackboard.step_plan,
             artifact_versions=blackboard.artifact_versions,
             human_gates=blackboard.human_gates,
+            vocabulary_suggestions=blackboard.vocabulary_suggestions,
             tool_calls=blackboard.tool_calls,
             context_bundle=blackboard.context_bundle,
             memory_records=blackboard.memory_records,
@@ -191,6 +197,7 @@ class PowerBananaAgent:
             step_plan=blackboard.step_plan,
             artifact_versions=blackboard.artifact_versions,
             human_gates=blackboard.human_gates,
+            vocabulary_suggestions=blackboard.vocabulary_suggestions,
             tool_calls=blackboard.tool_calls,
             context_bundle=blackboard.context_bundle,
             memory_records=blackboard.memory_records,
@@ -225,6 +232,7 @@ class PowerBananaAgent:
             step_plan=blackboard.step_plan,
             artifact_versions=blackboard.artifact_versions,
             human_gates=blackboard.human_gates,
+            vocabulary_suggestions=blackboard.vocabulary_suggestions,
             tool_calls=blackboard.tool_calls,
             context_bundle=blackboard.context_bundle,
             memory_records=blackboard.memory_records,

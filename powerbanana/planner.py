@@ -38,10 +38,13 @@ class DeterministicDataFilePlanner:
         candidate_plan = default_powerbanana_task_plan()
         intent = self.classifier.classify(question)
         analysis_request = (
-            self.analysis_request_parser.parse_optional(question)
+            self.analysis_request_parser.parse_optional(question, allow_default_group_by=False)
             if intent.scenario_id == "metric_analysis"
             else None
         )
+        warnings = list(intent.warnings)
+        if intent.scenario_id == "metric_analysis" and analysis_request is None:
+            warnings.append("needs_vocabulary_suggestion")
         return PlannerResult(
             candidate_plan=candidate_plan,
             trace=PlannerTrace(
@@ -54,7 +57,7 @@ class DeterministicDataFilePlanner:
                     "Classified the user question with the planner lexicon, then used the fixed "
                     "Phase 1 data-file analysis DAG: profile -> analysis -> report."
                 ),
-                warnings=intent.warnings,
+                warnings=warnings,
                 intent=intent,
                 lexicon_version=self.lexicon.version,
                 analysis_request=analysis_request,
