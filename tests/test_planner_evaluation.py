@@ -105,6 +105,56 @@ class PlannerEvaluationTests(unittest.TestCase):
         self.assertEqual(report.evaluation.target_type, "planner_trace")
         self.assertIn("planner_blocked", [event.event_type for event in report.blackboard_events])
 
+    def test_agent_routes_non_executable_planner_scenarios_without_running_dag(self):
+        cases = [
+            (
+                "Which channel performs best?",
+                "ambiguous_metric",
+                "ambiguous_metric",
+                "Please specify the metric",
+            ),
+            (
+                "Can you forecast conversion rate next month?",
+                "unsupported_forecast",
+                "unsupported_question",
+                "does not support forecasting",
+            ),
+            (
+                "Which channel has the highest revenue?",
+                "unsupported_revenue",
+                "unsupported_question",
+                "does not support revenue analysis",
+            ),
+            (
+                "Summarize this upload.",
+                "unknown",
+                "unknown_scenario",
+                "could not classify",
+            ),
+        ]
+
+        for question, scenario_id, failure_reason, answer_fragment in cases:
+            with self.subTest(question=question):
+                report = PowerBananaAgent(data_profile_agent=ExplodingDataProfileAgent()).answer(
+                    "missing.csv",
+                    question,
+                )
+
+                self.assertEqual(report.status, "needs_clarification")
+                self.assertIsNone(report.task_plan)
+                self.assertIsNone(report.dataset_snapshot)
+                self.assertEqual(report.dag_trace, [])
+                self.assertEqual(report.agent_trace, [])
+                self.assertEqual(report.step_trace, [])
+                self.assertEqual(report.planner_trace.intent.scenario_id, scenario_id)
+                self.assertEqual(report.planner_evaluation.gate_action, "pass")
+                self.assertEqual(report.evaluation.target_type, "planner_routing_gate")
+                self.assertEqual(report.evaluation.gate_action, "needs_clarification")
+                self.assertIn(failure_reason, report.evaluation.failure_reasons)
+                self.assertIn(answer_fragment, report.answer)
+                self.assertEqual(report.human_gates[0].gate_type, "clarification")
+                self.assertIn("planner_routed", [event.event_type for event in report.blackboard_events])
+
 
 if __name__ == "__main__":
     unittest.main()

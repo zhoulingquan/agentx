@@ -101,6 +101,8 @@ class GoldenCaseRunner:
             self._expect_equal(failures, "top_value", actual, data["expected_top_value"])
         if "expected_evaluation_verdict" in data:
             self._expect_equal(failures, "evaluation.verdict", report.evaluation.verdict, data["expected_evaluation_verdict"])
+        if "expected_evaluation_target_type" in data:
+            self._expect_equal(failures, "evaluation.target_type", report.evaluation.target_type, data["expected_evaluation_target_type"])
         if "expected_gate_action" in data:
             self._expect_equal(failures, "evaluation.gate_action", report.evaluation.gate_action, data["expected_gate_action"])
         if "expected_failure_reasons" in data:
@@ -119,18 +121,35 @@ class GoldenCaseRunner:
             self._expect_equal(failures, "human_gates_count", len(report.human_gates), data["expected_human_gates_count"])
         if "expected_step_skills" in data:
             self._expect_equal(failures, "step_skills", [step.skill_id for step in report.step_trace], data["expected_step_skills"])
+        if "expected_agent_trace_count" in data:
+            self._expect_equal(failures, "agent_trace_count", len(report.agent_trace), data["expected_agent_trace_count"])
+        if "expected_dag_trace_count" in data:
+            self._expect_equal(failures, "dag_trace_count", len(report.dag_trace), data["expected_dag_trace_count"])
         if "expected_limitations_contains" in data:
             limitations = "\n".join(report.limitations)
             for text in data["expected_limitations_contains"]:
                 if text not in limitations:
                     failures.append(f"limitations missing text {text!r}")
+        if "expected_dataset_snapshot_present" in data:
+            self._expect_equal(
+                failures,
+                "dataset_snapshot_present",
+                report.dataset_snapshot is not None,
+                data["expected_dataset_snapshot_present"],
+            )
         if "expected_row_count" in data:
-            self._expect_equal(failures, "row_count", report.dataset_snapshot.row_count, data["expected_row_count"])
+            actual = report.dataset_snapshot.row_count if report.dataset_snapshot is not None else None
+            self._expect_equal(failures, "row_count", actual, data["expected_row_count"])
         if "expected_columns" in data:
-            self._expect_equal(failures, "columns", report.dataset_snapshot.columns, data["expected_columns"])
+            actual = report.dataset_snapshot.columns if report.dataset_snapshot is not None else None
+            self._expect_equal(failures, "columns", actual, data["expected_columns"])
         if "expected_missing_counts" in data:
             for column, expected_count in data["expected_missing_counts"].items():
-                actual_count = report.dataset_snapshot.missing_counts.get(column)
+                actual_count = (
+                    report.dataset_snapshot.missing_counts.get(column)
+                    if report.dataset_snapshot is not None
+                    else None
+                )
                 self._expect_equal(failures, f"missing_counts.{column}", actual_count, expected_count)
         return failures
 

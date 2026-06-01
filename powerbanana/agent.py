@@ -12,6 +12,32 @@ from .planner import DeterministicDataFilePlanner, Planner
 from .subagents import DataAnalysisAgent, DataProfileAgent, ReportAgent
 
 
+EXECUTABLE_PLANNER_SCENARIOS = {"conversion_rate_analysis"}
+
+PLANNER_ROUTE_MESSAGES = {
+    "ambiguous_metric": {
+        "failure_reason": "ambiguous_metric",
+        "answer": "Please specify the metric to optimize, such as conversion_rate, revenue, orders, or visits.",
+        "prompt": "Please specify the metric to optimize, such as conversion_rate, revenue, orders, or visits.",
+    },
+    "unsupported_forecast": {
+        "failure_reason": "unsupported_question",
+        "answer": "PowerBanana v0.1 does not support forecasting yet. Please ask for conversion rate by group.",
+        "prompt": "Please ask for a supported conversion-rate question by group.",
+    },
+    "unsupported_revenue": {
+        "failure_reason": "unsupported_question",
+        "answer": "PowerBanana v0.1 does not support revenue analysis yet. Please ask for conversion rate by group.",
+        "prompt": "Please ask for a supported conversion-rate question by group.",
+    },
+    "unknown": {
+        "failure_reason": "unknown_scenario",
+        "answer": "PowerBanana could not classify this question. Please ask for a supported conversion-rate question by group.",
+        "prompt": "Please rephrase as a supported conversion-rate question by group.",
+    },
+}
+
+
 class PowerBananaAgent:
     name = "PowerBanana"
     version = "0.1"
@@ -39,6 +65,8 @@ class PowerBananaAgent:
         blackboard.record_planner_evaluation(self.evaluation_runner.evaluate_planner_trace(blackboard))
         if blackboard.planner_evaluation.gate_action == "block":
             return self._planner_blocked_report(blackboard)
+        if self._should_route_from_planner(blackboard):
+            return self._planner_routed_report(blackboard)
         blackboard.task_plan = PlanValidator().validate(planner_result.candidate_plan)
         task_dag = TaskDagExecutor.from_plan(blackboard.task_plan)
         result = task_dag.run(
@@ -54,6 +82,85 @@ class PowerBananaAgent:
         if isinstance(result, PowerBananaReport):
             return result
         return self._clarification_report(blackboard)
+
+    def _should_route_from_planner(self, blackboard: TaskBlackboard) -> bool:
+        intent = blackboard.planner_trace.intent if blackboard.planner_trace else None
+        if intent:
+            scenario_id = intent.scenario_id
+        elif blackboard.planner_trace:
+            scenario_id = blackboard.planner_trace.scenario_id
+        else:
+            scenario_id = "unknown"
+        return scenario_id not in EXECUTABLE_PLANNER_SCENARIOS
+
+    def _planner_routed_report(self, blackboard: TaskBlackboard) -> PowerBananaReport:
+        if blackboard.planner_trace is None or blackboard.planner_evaluation is None:
+            raise ValueError("Planner routed reports require planner_trace and planner_evaluation.")
+        intent = blackboard.planner_trace.intent
+        scenario_id = intent.scenario_id if intent else blackboard.planner_trace.scenario_id
+        route = PLANNER_ROUTE_MESSAGES.get(
+            scenario_id,
+            {
+                "failure_reason": "unsupported_question",
+                "answer": "PowerBanana v0.1 supports conversion-rate questions for CSV datasets. Please ask for conversion rate by group.",
+                "prompt": "Please ask for a conversion-rate question using channel, visits, and orders.",
+            },
+        )
+        target_ref = f"blackboard://{blackboard.task_id}/planner/{blackboard.planner_trace.candidate_plan_id}/routing"
+        failure_reason = route["failure_reason"]
+        warnings = list(intent.warnings if intent else blackboard.planner_trace.warnings)
+        blackboard.status = "needs_clarification"
+        blackboard.answer = route["answer"]
+        blackboard.limitations = ["Planner routed before dataset loading."]
+        blackboard.record_evaluation(
+            self.evaluation_runner.evaluate_gate(
+                blackboard,
+                verdict="needs_clarification",
+                failure_reasons=[failure_reason],
+                gate_action="needs_clarification",
+                target_type="planner_routing_gate",
+                target_ref=target_ref,
+                scores={"planner_routing": 1.0},
+                warnings=warnings,
+            )
+        )
+        blackboard.create_human_gate("clarification", failure_reason, route["prompt"])
+        blackboard.append_event(
+            "planner_routed",
+            "main_agent",
+            target_ref,
+            {
+                "scenario_id": scenario_id,
+                "gate_action": "needs_clarification",
+                "failure_reasons": [failure_reason],
+            },
+        )
+        return PowerBananaReport(
+            agent_name=self.name,
+            version=self.version,
+            status=blackboard.status,
+            answer=blackboard.answer,
+            dataset_snapshot=None,
+            security_findings=blackboard.security_findings,
+            agent_trace=blackboard.agent_trace,
+            dag_trace=blackboard.dag_trace,
+            blackboard_events=blackboard.events,
+            blackboard_entries=blackboard.entries,
+            task_plan=blackboard.task_plan,
+            planner_trace=blackboard.planner_trace,
+            planner_evaluation=blackboard.planner_evaluation,
+            step_plan=blackboard.step_plan,
+            artifact_versions=blackboard.artifact_versions,
+            human_gates=blackboard.human_gates,
+            tool_calls=blackboard.tool_calls,
+            context_bundle=blackboard.context_bundle,
+            memory_records=blackboard.memory_records,
+            llm_settings=blackboard.llm_settings,
+            step_trace=blackboard.step_trace,
+            evaluation=blackboard.evaluation,
+            analysis_result=blackboard.analysis_result,
+            limitations=blackboard.limitations,
+        )
 
     def _planner_blocked_report(self, blackboard: TaskBlackboard) -> PowerBananaReport:
         if blackboard.planner_evaluation is None:

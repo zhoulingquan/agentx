@@ -33,7 +33,7 @@ Each entry includes:
 
 Events answer "what happened and when." Entries answer "what structured fact now exists." Every entry has an `audit_ref` pointing to an `entry_written` event.
 
-When planner evaluation blocks execution, the event log includes `planner_blocked`. In that path no dataset snapshot, agent trace, DAG trace, or analysis artifact is produced.
+When planner evaluation blocks execution, the event log includes `planner_blocked`. When planner routing returns clarification for a non-executable scenario, the event log includes `planner_routed`. In both paths no dataset snapshot, agent trace, DAG trace, or analysis artifact is produced.
 
 ## Why This Matters
 

@@ -2,11 +2,12 @@
 
 PowerBanana uses a deterministic, extensible Evaluation Layer. Evaluators inspect structured context and return an `EvaluatorOutcome`; the `EvaluationRunner` aggregates all outcomes into one `EvaluationResult`.
 
-The layer now evaluates two targets:
+The layer now evaluates three targets:
 
 | Target | Entry Point | Report Field |
 |---|---|---|
 | Planner trace | `EvaluationRunner.evaluate_planner_trace` | `planner_evaluation` |
+| Planner routing gate | `EvaluationRunner.evaluate_gate` | `evaluation` |
 | Analysis result | `EvaluationRunner.evaluate_analysis` | `evaluation` |
 
 ## Default Evaluators
@@ -33,6 +34,8 @@ The layer now evaluates two targets:
 - `ambiguous_metric` does not carry `missing_metric`.
 
 Planner evaluation is recorded separately as `planner_evaluation`, so final answer evaluation remains focused on the analysis result. If planner evaluation returns `block`, PowerBanana returns a blocked report immediately and does not validate the candidate plan, load the dataset, or run DAG nodes.
+
+After planner evaluation passes, `PowerBananaAgent` treats `conversion_rate_analysis` as the only executable v0.1 scenario. `ambiguous_metric`, `unsupported_*`, and `unknown` scenarios record a `planner_routing_gate` evaluation with `needs_clarification`, create a human clarification gate, and return before dataset loading or DAG execution.
 
 ## Gate Actions
 

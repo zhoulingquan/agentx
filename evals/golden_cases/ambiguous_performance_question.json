@@ -8,9 +8,12 @@
   "expected_gate_action": "needs_clarification",
   "expected_failure_reasons": ["ambiguous_metric"],
   "expected_blocking_issues": [],
+  "expected_evaluation_target_type": "planner_routing_gate",
   "expected_security_findings_count": 0,
   "expected_human_gates_count": 1,
   "expected_step_skills": [],
-  "expected_row_count": 2,
-  "expected_columns": ["channel", "visits", "orders", "revenue"]
+  "expected_agent_trace_count": 0,
+  "expected_dag_trace_count": 0,
+  "expected_dataset_snapshot_present": false,
+  "expected_limitations_contains": ["Planner routed before dataset loading."]
 }
