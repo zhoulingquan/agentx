@@ -109,6 +109,7 @@ Review commands:
 python -m powerbanana.cli vocab list
 python -m powerbanana.cli vocab approve vocab_000001 --dry-run
 python -m powerbanana.cli vocab approve vocab_000001
+python -m powerbanana.cli vocab promote-golden vocab_000001 --question "哪个地区收入最高？" --matched-signal "收入" --expected-metric revenue
 python -m powerbanana.cli vocab reject vocab_000001 --note "Rejected after review"
 ```
 
@@ -119,6 +120,19 @@ Approval validation stores three extra fields on the local suggestion record:
 | `validation_status` | `passed` or `failed` after approval validation. |
 | `validation_output` | Messages from reloading and checking `config/analysis_terms.csv`. |
 | `golden_case_draft_path` | Local JSON draft under `runs/golden_case_drafts/`. |
+
+Promoted Planner golden cases may include an `expected_analysis_request` block:
+
+```json
+{
+  "expected_analysis_request": {
+    "metric": "revenue",
+    "group_by": "region"
+  }
+}
+```
+
+This lets a vocabulary expansion prove that the Planner can parse the approved field, not only classify the broad scenario.
 
 ## Expansion Governance
 
@@ -132,7 +146,7 @@ The safe expansion loop is:
 6. Approved terms are written into `config/analysis_terms.csv` with `powerbanana vocab approve <suggestion_id>`.
 7. The approval command validates the CSV and writes a local golden case draft.
 8. Rejected suggestions remain in the local JSONL audit log and do not change CSV vocabulary.
-9. A reviewed golden case is promoted into `evals/` when the behavior should become stable.
+9. A reviewed Planner golden case is promoted with `powerbanana vocab promote-golden <suggestion_id>`.
 10. Regression tests must pass before the new vocabulary is treated as stable.
 
 This prevents one accidental input from silently changing Planner behavior for everyone.

@@ -104,12 +104,13 @@ Review pending vocabulary suggestions:
 python -m powerbanana.cli vocab list
 python -m powerbanana.cli vocab approve vocab_000001 --dry-run
 python -m powerbanana.cli vocab approve vocab_000001
+python -m powerbanana.cli vocab promote-golden vocab_000001 --question "哪个地区收入最高？" --matched-signal "收入" --expected-metric revenue
 python -m powerbanana.cli vocab reject vocab_000001 --note "Not a stable business term"
 ```
 
 Suggestions are stored locally in `runs/vocabulary_suggestions.jsonl`. `--dry-run` previews the exact CSV row without changing files. Approving a suggestion appends it to `config/analysis_terms.csv`, reloads the CSV to verify the term is active, stores `validation_status` on the suggestion record, and writes a local golden case draft under `runs/golden_case_drafts/`. Rejecting a suggestion keeps the audit record but does not change active vocabulary.
 
-After approval, review the generated golden case draft, promote it into `evals/planner_cases/` or `evals/golden_cases/` when it represents stable expected behavior, then run the tests before treating the new term as stable.
+After approval, review the generated golden case draft and promote it into `evals/planner_cases/` when it represents stable expected behavior. The promotion command validates the new Planner golden case before writing it. End-to-end golden cases still need a synthetic CSV fixture and expected answer before they can be added to `evals/golden_cases/`.
 
 ## Extending Evaluation
 

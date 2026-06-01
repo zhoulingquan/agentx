@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from .agent import PowerBananaAgent
-from .analysis_request import DEFAULT_ANALYSIS_TERMS_PATH
+from .analysis_request import DEFAULT_ANALYSIS_TERMS_PATH, default_analysis_terms
+from .golden_promotion import GoldenCasePromoter
+from .planner import DeterministicDataFilePlanner
 from .vocabulary import (
     DEFAULT_GOLDEN_CASE_DRAFTS_DIR,
     DEFAULT_SUGGESTION_STORE_PATH,
@@ -120,6 +122,32 @@ def _vocab_main(argv: list[str]) -> int:
     _add_vocabulary_store_options(reject_parser)
     reject_parser.add_argument("--note", default="", help="Reviewer note to store with the decision")
 
+    promote_parser = subparsers.add_parser("promote-golden", help="Promote a reviewed golden case draft into planner_cases")
+    promote_parser.add_argument("source", help="Suggestion id such as vocab_000001, or path to a draft JSON")
+    _add_vocabulary_store_options(promote_parser)
+    promote_parser.add_argument(
+        "--planner-cases",
+        type=Path,
+        default=Path("evals") / "planner_cases",
+        help="Directory for formal Planner golden case JSON files",
+    )
+    promote_parser.add_argument(
+        "--analysis-terms",
+        type=Path,
+        default=DEFAULT_ANALYSIS_TERMS_PATH,
+        help="Path to analysis_terms.csv used for validation",
+    )
+    promote_parser.add_argument("--question", help="Reviewed real user question for the promoted case")
+    promote_parser.add_argument("--case-id", help="Override the promoted golden case id")
+    promote_parser.add_argument(
+        "--matched-signal",
+        action="append",
+        default=[],
+        help="Expected Planner matched signal. Can be repeated.",
+    )
+    promote_parser.add_argument("--expected-metric", help="Expected AnalysisRequest metric")
+    promote_parser.add_argument("--overwrite", action="store_true", help="Replace an existing formal Planner golden case")
+
     args = parser.parse_args(argv)
     repository = VocabularySuggestionRepository(args.store)
     service = VocabularyApprovalService(repository)
@@ -161,11 +189,41 @@ def _vocab_main(argv: list[str]) -> int:
             record = service.reject(args.suggestion_id, reviewer_note=args.note)
             print(f"rejected {record.suggestion_id}: {record.suggestion.kind}={record.suggestion.value}")
             return 0
+        if args.action == "promote-golden":
+            draft_path = _resolve_golden_case_draft_path(repository, args.source)
+            planner = DeterministicDataFilePlanner(analysis_terms=default_analysis_terms(args.analysis_terms))
+            result = GoldenCasePromoter(planner=planner).promote_planner_case(
+                draft_path,
+                args.planner_cases,
+                question=args.question,
+                case_id=args.case_id,
+                matched_signals=args.matched_signal,
+                expected_metric=args.expected_metric,
+                overwrite=args.overwrite,
+            )
+            if not result.validation_passed:
+                print(f"Error: promoted case failed validation: {'; '.join(result.validation_output)}")
+                return 1
+            print(f"promoted planner golden case {result.case_id}: {result.case_path}")
+            return 0
     except (KeyError, ValueError) as exc:
         print(f"Error: {exc}")
         return 1
     parser.error(f"unsupported vocab action: {args.action}")
     return 1
+
+
+def _resolve_golden_case_draft_path(repository: VocabularySuggestionRepository, source: str) -> Path:
+    source_path = Path(source)
+    if source_path.exists():
+        return source_path
+    record = repository.get_record(source)
+    if not record.golden_case_draft_path:
+        raise ValueError(f"Vocabulary suggestion {source} does not have a golden case draft path.")
+    draft_path = Path(record.golden_case_draft_path)
+    if not draft_path.exists():
+        raise ValueError(f"Golden case draft does not exist: {draft_path}")
+    return draft_path
 
 
 def main(argv: list[str] | None = None) -> int:

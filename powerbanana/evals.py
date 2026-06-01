@@ -185,7 +185,7 @@ class PlannerGoldenCaseRunner:
                 actual_scenario="",
                 reason="planner trace did not include intent",
             )
-        failures = self._check_intent(intent, data)
+        failures = self._check_intent(intent, planner_result.trace, data)
         return PlannerGoldenCaseResult(
             case_id=data["case_id"],
             passed=not failures,
@@ -194,7 +194,7 @@ class PlannerGoldenCaseRunner:
             reason="; ".join(failures),
         )
 
-    def _check_intent(self, intent: Any, data: dict[str, Any]) -> list[str]:
+    def _check_intent(self, intent: Any, trace: Any, data: dict[str, Any]) -> list[str]:
         failures: list[str] = []
         self._expect_equal(failures, "scenario_id", intent.scenario_id, data["expected_scenario"])
         if "expected_min_confidence" in data and intent.confidence < data["expected_min_confidence"]:
@@ -207,6 +207,14 @@ class PlannerGoldenCaseRunner:
         for warning in data.get("expected_warnings_contains", []):
             if warning not in intent.warnings:
                 failures.append(f"warnings missing {warning!r}")
+        if "expected_analysis_request" in data:
+            request = trace.analysis_request
+            if request is None:
+                failures.append("analysis_request expected but missing")
+            else:
+                for field_name, expected in data["expected_analysis_request"].items():
+                    actual = getattr(request, field_name, None)
+                    self._expect_equal(failures, f"analysis_request.{field_name}", actual, expected)
         return failures
 
     def _expect_equal(self, failures: list[str], field_name: str, actual: Any, expected: Any) -> None:
