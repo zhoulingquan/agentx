@@ -1,0 +1,11 @@
+{
+  "case_id": "model_declines_no_suggestion",
+  "question": "总结一下这个文件",
+  "dataset_columns": ["channel", "revenue"],
+  "llm_response": {
+    "should_suggest": false,
+    "suggestion": null
+  },
+  "expected_validation_passed": false,
+  "expected_failure_reasons_contains": ["no_vocabulary_suggestion"]
+}

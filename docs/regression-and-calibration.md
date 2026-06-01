@@ -1,6 +1,6 @@
 # Regression and Calibration
 
-PowerBanana uses three test suites with different purposes.
+PowerBanana uses four test suites with different purposes.
 
 ## Planner Golden Cases
 
@@ -26,6 +26,27 @@ Current coverage:
 | Ambiguous performance phrasing | Missing metric routes to `ambiguous_metric` |
 | Unsupported forecast phrasing | Forecast and prediction requests route to `unsupported_forecast` |
 | Unknown phrasing | Unmatched questions route to `unknown` |
+
+## Vocabulary Advisor Golden Cases
+
+Vocabulary advisor golden cases test the LLM-suggestion boundary without calling a real LLM. Each case provides a user question, dataset columns, and a fake JSON response. The runner feeds that response through `JsonLLMVocabularyAdvisor` and `VocabularyManager`, then checks whether local validation accepts or rejects it.
+
+Run:
+
+```powershell
+python -c "from pathlib import Path; from powerbanana.evals import VocabularyAdvisorGoldenCaseRunner; print(VocabularyAdvisorGoldenCaseRunner(Path('evals/vocabulary_cases')).run_all())"
+```
+
+Current coverage:
+
+| Case | Expected Behavior |
+|---|---|
+| `valid_region_group_by` | Accepts `group_by=region` when `region` is a dataset column |
+| `hallucinated_country_column_rejected` | Rejects suggestions for missing dataset columns |
+| `duplicate_channel_term_rejected` | Rejects terms already active in `analysis_terms.csv` |
+| `unsupported_metric_suggestion_rejected` | Rejects non-`group_by` suggestions |
+| `model_declines_no_suggestion` | Treats model decline as no safe suggestion |
+| `incomplete_json_rejected` | Treats incomplete structured output as no safe suggestion |
 
 ## Golden Cases
 

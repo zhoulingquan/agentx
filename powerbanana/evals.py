@@ -5,9 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .analysis_request import AnalysisTerms, default_analysis_terms
 from .agent import PowerBananaAgent
 from .evaluation import EvaluationRunner, evaluation_context_from_dict
+from .llm_vocabulary import JsonLLMVocabularyAdvisor
 from .planner import DeterministicDataFilePlanner
+from .vocabulary import VocabularyManager
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,23 @@ class PlannerGoldenCaseSummary:
     passed: int
     failed: int
     results: list[PlannerGoldenCaseResult] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class VocabularyAdvisorGoldenCaseResult:
+    case_id: str
+    passed: bool
+    expected_validation_passed: bool
+    actual_validation_passed: bool
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class VocabularyAdvisorGoldenCaseSummary:
+    total: int
+    passed: int
+    failed: int
+    results: list[VocabularyAdvisorGoldenCaseResult] = field(default_factory=list)
 
 
 class GoldenCaseRunner:
@@ -229,6 +249,80 @@ class PlannerGoldenCaseRunner:
     def _expect_equal(self, failures: list[str], field_name: str, actual: Any, expected: Any) -> None:
         if actual != expected:
             failures.append(f"{field_name} expected {expected!r}, got {actual!r}")
+
+
+class VocabularyAdvisorGoldenCaseRunner:
+    def __init__(self, cases_dir: Path, analysis_terms: AnalysisTerms | None = None) -> None:
+        self.cases_dir = cases_dir
+        self.analysis_terms = analysis_terms or default_analysis_terms()
+
+    def run_all(self) -> VocabularyAdvisorGoldenCaseSummary:
+        results = [self._run_case(path) for path in sorted(self.cases_dir.glob("*.json"))]
+        passed = sum(1 for result in results if result.passed)
+        return VocabularyAdvisorGoldenCaseSummary(
+            total=len(results),
+            passed=passed,
+            failed=len(results) - passed,
+            results=results,
+        )
+
+    def _run_case(self, path: Path) -> VocabularyAdvisorGoldenCaseResult:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        manager = VocabularyManager(
+            advisor=JsonLLMVocabularyAdvisor(
+                client=_StaticVocabularyJsonClient(data.get("llm_response")),
+                model="vocabulary-golden-case",
+            ),
+            analysis_terms=self.analysis_terms,
+        )
+        suggestion, validation = manager.suggest(
+            question=str(data["question"]),
+            dataset_columns=[str(column) for column in data.get("dataset_columns", [])],
+        )
+        failures = self._check_result(suggestion, validation, data)
+        expected_passed = bool(data["expected_validation_passed"])
+        return VocabularyAdvisorGoldenCaseResult(
+            case_id=str(data["case_id"]),
+            passed=not failures,
+            expected_validation_passed=expected_passed,
+            actual_validation_passed=validation.passed,
+            reason="; ".join(failures),
+        )
+
+    def _check_result(self, suggestion: Any, validation: Any, data: dict[str, Any]) -> list[str]:
+        failures: list[str] = []
+        self._expect_equal(
+            failures,
+            "validation.passed",
+            validation.passed,
+            bool(data["expected_validation_passed"]),
+        )
+        for reason in data.get("expected_failure_reasons_contains", []):
+            if reason not in validation.failure_reasons:
+                failures.append(f"failure_reasons missing {reason!r}")
+        expected_suggestion = data.get("expected_suggestion")
+        if expected_suggestion:
+            if suggestion is None:
+                failures.append("suggestion expected but missing")
+            else:
+                for field_name, expected in expected_suggestion.items():
+                    actual = getattr(suggestion, field_name, None)
+                    self._expect_equal(failures, f"suggestion.{field_name}", actual, expected)
+        return failures
+
+    def _expect_equal(self, failures: list[str], field_name: str, actual: Any, expected: Any) -> None:
+        if actual != expected:
+            failures.append(f"{field_name} expected {expected!r}, got {actual!r}")
+
+
+class _StaticVocabularyJsonClient:
+    def __init__(self, payload: object) -> None:
+        self.payload = payload
+
+    def complete_json(self, **_kwargs: Any) -> dict[str, Any]:
+        if not isinstance(self.payload, dict):
+            return {}
+        return self.payload
 
 
 class CalibrationRunner:

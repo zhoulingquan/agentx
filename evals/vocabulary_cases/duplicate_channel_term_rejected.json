@@ -1,0 +1,17 @@
+{
+  "case_id": "duplicate_channel_term_rejected",
+  "question": "哪个渠道收入最高？",
+  "dataset_columns": ["channel", "revenue"],
+  "llm_response": {
+    "should_suggest": true,
+    "suggestion": {
+      "kind": "group_by",
+      "value": "channel",
+      "terms": ["渠道"],
+      "reason": "The question asks by channel.",
+      "confidence": 0.7
+    }
+  },
+  "expected_validation_passed": false,
+  "expected_failure_reasons_contains": ["suggested_terms_already_active"]
+}

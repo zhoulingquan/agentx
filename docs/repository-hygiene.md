@@ -9,6 +9,8 @@ PowerBanana keeps tests and synthetic evaluation assets in Git so every machine 
 | `powerbanana/` | Yes | Runtime source code. |
 | `config/planner_lexicon.csv` | Yes | User-editable preset Planner vocabulary. |
 | `tests/` | Yes | Automated regression tests. |
+| `evals/planner_cases/` | Yes | Synthetic Planner scenario cases. |
+| `evals/vocabulary_cases/` | Yes | Synthetic vocabulary advisor safety cases. |
 | `evals/golden_cases/` | Yes | Synthetic user-question golden cases. |
 | `evals/calibration_cases/` | Yes | Synthetic evaluation calibration cases. |
 | `evals/fixtures/` | Yes | Shared synthetic fixtures. |

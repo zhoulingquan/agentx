@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -11,11 +12,14 @@ from .analysis_request import DEFAULT_ANALYSIS_TERMS_PATH, default_analysis_term
 from .golden_promotion import GoldenCasePromoter
 from .llm import vocabulary_advisor_from_env
 from .planner import DeterministicDataFilePlanner
+from .tools import ToolGateway
 from .vocabulary import (
     DEFAULT_GOLDEN_CASE_DRAFTS_DIR,
     DEFAULT_SUGGESTION_STORE_PATH,
     VocabularyApprovalService,
+    VocabularyManager,
     VocabularySuggestionRepository,
+    VocabularySuggestionStore,
 )
 
 YELLOW = "\033[33m"
@@ -99,6 +103,24 @@ def _vocab_main(argv: list[str]) -> int:
         choices=["pending_user_approval", "approved", "rejected", "approved_validation_failed"],
         help="Filter by review status",
     )
+
+    suggest_parser = subparsers.add_parser("suggest", help="Ask the configured vocabulary advisor for a candidate")
+    _add_vocabulary_store_options(suggest_parser)
+    suggest_parser.add_argument("--question", required=True, help="User question to inspect")
+    suggest_parser.add_argument(
+        "--columns",
+        action="append",
+        default=[],
+        help="Dataset columns as a comma-separated list. Can be repeated.",
+    )
+    suggest_parser.add_argument("--dataset", type=Path, help="Dataset file used to discover columns")
+    suggest_parser.add_argument(
+        "--analysis-terms",
+        type=Path,
+        default=DEFAULT_ANALYSIS_TERMS_PATH,
+        help="Path to analysis_terms.csv",
+    )
+    suggest_parser.add_argument("--dry-run", action="store_true", help="Print the candidate without recording it")
 
     approve_parser = subparsers.add_parser("approve", help="Approve a vocabulary suggestion and append it to analysis_terms.csv")
     approve_parser.add_argument("suggestion_id", help="Suggestion id such as vocab_000001")
@@ -189,6 +211,34 @@ def _vocab_main(argv: list[str]) -> int:
                     f"confidence={suggestion.confidence:.2f} source={suggestion.source}"
                 )
             return 0
+        if args.action == "suggest":
+            columns = _resolve_suggest_columns(args)
+            analysis_terms = default_analysis_terms(args.analysis_terms)
+            manager = VocabularyManager(
+                advisor=vocabulary_advisor_from_env(),
+                analysis_terms=analysis_terms,
+                suggestion_repository=repository,
+            )
+            suggestion, validation = manager.suggest(args.question, columns)
+            reasons = "|".join(validation.failure_reasons)
+            if suggestion is None:
+                print(f"no suggestion: validation=failed reasons={reasons}")
+                return 0
+            csv_line = VocabularySuggestionStore().csv_line(suggestion)
+            if args.dry_run:
+                print(
+                    f"dry-run suggestion: {suggestion.kind}={suggestion.value} "
+                    f"terms={'|'.join(suggestion.terms)} "
+                    f"confidence={suggestion.confidence:.2f} "
+                    f"validation=passed would append {csv_line}"
+                )
+                return 0
+            record = manager.record_pending(suggestion)
+            print(
+                f"recorded {record.suggestion_id}: {suggestion.kind}={suggestion.value} "
+                f"terms={'|'.join(suggestion.terms)} confidence={suggestion.confidence:.2f}"
+            )
+            return 0
         if args.action == "approve":
             if args.dry_run:
                 preview = service.preview(args.suggestion_id)
@@ -253,6 +303,27 @@ def _vocab_main(argv: list[str]) -> int:
     return 1
 
 
+def _resolve_suggest_columns(args: argparse.Namespace) -> list[str]:
+    if args.dataset:
+        columns = ToolGateway().read_dataset_snapshot(args.dataset).snapshot.columns
+        if columns:
+            return columns
+    columns = _split_cli_columns(args.columns)
+    if not columns:
+        raise ValueError("vocab suggest requires --dataset or --columns.")
+    return columns
+
+
+def _split_cli_columns(values: list[str]) -> list[str]:
+    columns: list[str] = []
+    for value in values:
+        for column in value.replace("|", ",").split(","):
+            stripped = column.strip()
+            if stripped and stripped not in columns:
+                columns.append(stripped)
+    return columns
+
+
 def _resolve_golden_case_draft_path(repository: VocabularySuggestionRepository, source: str) -> Path:
     source_path = Path(source)
     if source_path.exists():
@@ -267,7 +338,7 @@ def _resolve_golden_case_draft_path(repository: VocabularySuggestionRepository, 
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = list(argv) if argv is not None else None
+    argv = list(argv) if argv is not None else sys.argv[1:]
     if argv and argv[0] == "vocab":
         return _vocab_main(argv[1:])
 

@@ -121,6 +121,8 @@ Optional settings:
 Review pending vocabulary suggestions:
 
 ```powershell
+python -m powerbanana.cli vocab suggest --question "哪个地区收入最高？" --columns region,revenue --dry-run
+python -m powerbanana.cli vocab suggest --question "哪个地区收入最高？" --dataset samples\region_revenue.csv --dry-run
 python -m powerbanana.cli vocab list
 python -m powerbanana.cli vocab approve vocab_000001 --dry-run
 python -m powerbanana.cli vocab approve vocab_000001
@@ -132,6 +134,14 @@ python -m powerbanana.cli vocab reject vocab_000001 --note "Not a stable busines
 Suggestions are stored locally in `runs/vocabulary_suggestions.jsonl`. `--dry-run` previews the exact CSV row without changing files. Approving a suggestion appends it to `config/analysis_terms.csv`, reloads the CSV to verify the term is active, stores `validation_status` on the suggestion record, and writes a local golden case draft under `runs/golden_case_drafts/`. Rejecting a suggestion keeps the audit record but does not change active vocabulary.
 
 After approval, review the generated golden case draft and promote it into `evals/planner_cases/` when it represents stable expected Planner behavior. Use `promote-e2e-golden` with a synthetic CSV dataset when the full CSV -> question -> answer behavior should become part of `evals/golden_cases/`. Both promotion commands validate the generated case before keeping it.
+
+Run vocabulary advisor golden cases:
+
+```powershell
+python -c "from pathlib import Path; from powerbanana.evals import VocabularyAdvisorGoldenCaseRunner; print(VocabularyAdvisorGoldenCaseRunner(Path('evals/vocabulary_cases')).run_all())"
+```
+
+These cases test LLM-style responses with a fake JSON client. They verify that safe suggestions pass validation while hallucinated fields, duplicate active terms, unsupported kinds, and incomplete JSON are rejected.
 
 ## Extending Evaluation
 
@@ -207,7 +217,7 @@ Keep these project assets in Git:
 | `powerbanana/` | Runtime source code. |
 | `config/` | User-editable Planner lexicon CSV. |
 | `tests/` | Automated tests for the CLI, Planner, Blackboard, DAG, and governance behavior. |
-| `evals/` | Synthetic planner cases, golden cases, calibration cases, and fixtures. |
+| `evals/` | Synthetic planner cases, vocabulary advisor cases, golden cases, calibration cases, and fixtures. |
 | `docs/` | GitHub Pages documentation. |
 
 Keep real user datasets and local run outputs out of Git. Use local-only directories such as `local_data/`, `private_data/`, `user_uploads/`, or `runs/`.

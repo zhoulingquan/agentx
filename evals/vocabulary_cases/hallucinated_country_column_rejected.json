@@ -1,0 +1,17 @@
+{
+  "case_id": "hallucinated_country_column_rejected",
+  "question": "哪个国家收入最高？",
+  "dataset_columns": ["region", "revenue"],
+  "llm_response": {
+    "should_suggest": true,
+    "suggestion": {
+      "kind": "group_by",
+      "value": "country",
+      "terms": ["国家"],
+      "reason": "The question asks by country.",
+      "confidence": 0.76
+    }
+  },
+  "expected_validation_passed": false,
+  "expected_failure_reasons_contains": ["suggested_value_not_in_dataset_columns"]
+}

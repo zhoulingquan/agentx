@@ -55,6 +55,26 @@ class PowerBananaCliTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def fake_region_advisor(self):
+        class FakeRegionAdvisor:
+            provider = "test"
+            model = "fake"
+            temperature = 0.0
+            max_tokens = 0
+
+            def suggest(self, question, dataset_columns, analysis_terms):
+                return VocabularySuggestion(
+                    target_csv="config/analysis_terms.csv",
+                    kind="group_by",
+                    value="region",
+                    terms=["地区", "区域"],
+                    reason="test suggestion",
+                    source="fake",
+                    confidence=0.8,
+                )
+
+        return FakeRegionAdvisor()
+
     def test_logo_is_yellow_ascii_power_banana(self):
         output = cli.yellow_logo()
 
@@ -115,6 +135,19 @@ class PowerBananaCliTests(unittest.TestCase):
             self.assertIn("vocab_000001", text)
             self.assertIn("pending_user_approval", text)
             self.assertIn("group_by=region", text)
+
+    def test_main_without_explicit_argv_dispatches_vocab_subcommands_from_sys_argv(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "vocabulary_suggestions.jsonl"
+            self.write_pending_suggestion(store_path)
+            stdout = io.StringIO()
+
+            with patch("sys.argv", ["powerbanana", "vocab", "list", "--store", str(store_path)]):
+                with redirect_stdout(stdout):
+                    exit_code = cli.main()
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("vocab_000001", stdout.getvalue())
 
     def test_vocab_approve_appends_terms_and_updates_status(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -181,6 +214,74 @@ class PowerBananaCliTests(unittest.TestCase):
             self.assertIn("would append group_by,region,地区|区域,,", text)
             self.assertEqual(terms_path.read_text(encoding="utf-8"), original)
             self.assertEqual(VocabularySuggestionRepository(store_path).get_record("vocab_000001").status, "pending_user_approval")
+
+    def test_vocab_suggest_dry_run_prints_candidate_without_recording(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            store_path = root / "vocabulary_suggestions.jsonl"
+            terms_path = root / "analysis_terms.csv"
+            self.write_terms_csv(terms_path)
+            stdout = io.StringIO()
+
+            with patch("powerbanana.cli.vocabulary_advisor_from_env", return_value=self.fake_region_advisor()):
+                with redirect_stdout(stdout):
+                    exit_code = cli.main(
+                        [
+                            "vocab",
+                            "suggest",
+                            "--question",
+                            "哪个地区收入最高？",
+                            "--columns",
+                            "region,revenue",
+                            "--analysis-terms",
+                            str(terms_path),
+                            "--store",
+                            str(store_path),
+                            "--dry-run",
+                        ]
+                    )
+
+            text = stdout.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("dry-run suggestion", text)
+            self.assertIn("group_by=region", text)
+            self.assertIn("validation=passed", text)
+            self.assertIn("would append group_by,region,地区|区域,,", text)
+            self.assertFalse(store_path.exists())
+
+    def test_vocab_suggest_can_read_columns_from_dataset_and_record_pending(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            store_path = root / "vocabulary_suggestions.jsonl"
+            terms_path = root / "analysis_terms.csv"
+            dataset_path = root / "region_revenue.csv"
+            self.write_terms_csv(terms_path)
+            self.write_region_revenue_csv(dataset_path)
+            stdout = io.StringIO()
+
+            with patch("powerbanana.cli.vocabulary_advisor_from_env", return_value=self.fake_region_advisor()):
+                with redirect_stdout(stdout):
+                    exit_code = cli.main(
+                        [
+                            "vocab",
+                            "suggest",
+                            "--question",
+                            "哪个地区收入最高？",
+                            "--dataset",
+                            str(dataset_path),
+                            "--analysis-terms",
+                            str(terms_path),
+                            "--store",
+                            str(store_path),
+                        ]
+                    )
+
+            text = stdout.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("recorded vocab_000001", text)
+            record = VocabularySuggestionRepository(store_path).get_record("vocab_000001")
+            self.assertEqual(record.suggestion.value, "region")
+            self.assertEqual(record.status, "pending_user_approval")
 
     def test_vocab_reject_updates_status_without_csv_mutation(self):
         with tempfile.TemporaryDirectory() as tmpdir:

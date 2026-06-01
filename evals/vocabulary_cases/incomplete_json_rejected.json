@@ -1,0 +1,14 @@
+{
+  "case_id": "incomplete_json_rejected",
+  "question": "哪个地区收入最高？",
+  "dataset_columns": ["region", "revenue"],
+  "llm_response": {
+    "should_suggest": true,
+    "suggestion": {
+      "kind": "group_by",
+      "value": "region"
+    }
+  },
+  "expected_validation_passed": false,
+  "expected_failure_reasons_contains": ["no_vocabulary_suggestion"]
+}

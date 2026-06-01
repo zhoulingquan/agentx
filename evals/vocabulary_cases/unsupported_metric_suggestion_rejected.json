@@ -1,0 +1,17 @@
+{
+  "case_id": "unsupported_metric_suggestion_rejected",
+  "question": "哪个地区利润最高？",
+  "dataset_columns": ["region", "profit"],
+  "llm_response": {
+    "should_suggest": true,
+    "suggestion": {
+      "kind": "metric",
+      "value": "profit",
+      "terms": ["利润"],
+      "reason": "The question asks for profit.",
+      "confidence": 0.74
+    }
+  },
+  "expected_validation_passed": false,
+  "expected_failure_reasons_contains": ["unsupported_suggestion_kind"]
+}

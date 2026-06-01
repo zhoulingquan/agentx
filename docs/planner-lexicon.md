@@ -136,6 +136,8 @@ Supported environment variables:
 Review commands:
 
 ```powershell
+python -m powerbanana.cli vocab suggest --question "哪个地区收入最高？" --columns region,revenue --dry-run
+python -m powerbanana.cli vocab suggest --question "哪个地区收入最高？" --dataset samples\region_revenue.csv --dry-run
 python -m powerbanana.cli vocab list
 python -m powerbanana.cli vocab approve vocab_000001 --dry-run
 python -m powerbanana.cli vocab approve vocab_000001
@@ -143,6 +145,8 @@ python -m powerbanana.cli vocab promote-golden vocab_000001 --question "哪个�
 python -m powerbanana.cli vocab promote-e2e-golden vocab_000001 --dataset samples\region_revenue.csv --question "哪个地区收入最高？" --expected-metric revenue
 python -m powerbanana.cli vocab reject vocab_000001 --note "Rejected after review"
 ```
+
+`vocab suggest --dry-run` asks the configured advisor for a candidate and validates it locally without recording anything. Use `--columns` for a quick manual check, or `--dataset` when you want PowerBanana to read the actual dataset columns. Without `--dry-run`, a valid suggestion is recorded as `pending_user_approval` in the local JSONL store.
 
 Approval validation stores three extra fields on the local suggestion record:
 
@@ -172,6 +176,14 @@ python -m powerbanana.cli vocab promote-e2e-golden vocab_000001 --dataset sample
 ```
 
 This command runs the full agent, captures the completed answer, copies the dataset into `evals/golden_cases/`, writes the matching JSON expectation file, and validates the generated case before keeping it.
+
+Vocabulary advisor golden cases live in `evals/vocabulary_cases/` and use fake JSON responses instead of a real LLM call:
+
+```powershell
+python -c "from pathlib import Path; from powerbanana.evals import VocabularyAdvisorGoldenCaseRunner; print(VocabularyAdvisorGoldenCaseRunner(Path('evals/vocabulary_cases')).run_all())"
+```
+
+They currently cover accepted `region` suggestions, hallucinated dataset columns, duplicate active terms, unsupported suggestion kinds, model decline, and incomplete JSON responses.
 
 ## Expansion Governance
 

@@ -61,6 +61,7 @@ Supported:
 - Governed planner lexicon for scenario classification.
 - Optional real LLM vocabulary advisor for candidate-only missing-term suggestions.
 - Local vocabulary suggestion approval flow with dry-run, validation, golden case drafts, Planner promotion, and end-to-end golden promotion.
+- Vocabulary advisor golden cases for testing LLM-style suggestion safety without real API calls.
 - Task DAG trace, Blackboard events, Step trace, Evaluation result.
 - Golden cases, calibration cases, and replay snapshots.
 
