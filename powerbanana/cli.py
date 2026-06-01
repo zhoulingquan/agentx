@@ -148,6 +148,27 @@ def _vocab_main(argv: list[str]) -> int:
     promote_parser.add_argument("--expected-metric", help="Expected AnalysisRequest metric")
     promote_parser.add_argument("--overwrite", action="store_true", help="Replace an existing formal Planner golden case")
 
+    e2e_parser = subparsers.add_parser("promote-e2e-golden", help="Promote a reviewed draft into golden_cases")
+    e2e_parser.add_argument("source", help="Suggestion id such as vocab_000001, or path to a draft JSON")
+    _add_vocabulary_store_options(e2e_parser)
+    e2e_parser.add_argument("--dataset", type=Path, required=True, help="Synthetic CSV dataset to copy into golden_cases")
+    e2e_parser.add_argument("--question", required=True, help="Reviewed real user question for the promoted case")
+    e2e_parser.add_argument(
+        "--golden-cases",
+        type=Path,
+        default=Path("evals") / "golden_cases",
+        help="Directory for formal end-to-end golden case files",
+    )
+    e2e_parser.add_argument(
+        "--analysis-terms",
+        type=Path,
+        default=DEFAULT_ANALYSIS_TERMS_PATH,
+        help="Path to analysis_terms.csv used for validation",
+    )
+    e2e_parser.add_argument("--case-id", help="Override the promoted golden case id")
+    e2e_parser.add_argument("--expected-metric", help="Expected AnalysisResult metric")
+    e2e_parser.add_argument("--overwrite", action="store_true", help="Replace an existing formal end-to-end golden case")
+
     args = parser.parse_args(argv)
     repository = VocabularySuggestionRepository(args.store)
     service = VocabularyApprovalService(repository)
@@ -205,6 +226,24 @@ def _vocab_main(argv: list[str]) -> int:
                 print(f"Error: promoted case failed validation: {'; '.join(result.validation_output)}")
                 return 1
             print(f"promoted planner golden case {result.case_id}: {result.case_path}")
+            return 0
+        if args.action == "promote-e2e-golden":
+            draft_path = _resolve_golden_case_draft_path(repository, args.source)
+            planner = DeterministicDataFilePlanner(analysis_terms=default_analysis_terms(args.analysis_terms))
+            agent = PowerBananaAgent(planner=planner)
+            result = GoldenCasePromoter(planner=planner, agent=agent).promote_e2e_case(
+                draft_path,
+                args.golden_cases,
+                dataset_path=args.dataset,
+                question=args.question,
+                case_id=args.case_id,
+                expected_metric=args.expected_metric,
+                overwrite=args.overwrite,
+            )
+            if not result.validation_passed:
+                print(f"Error: promoted e2e case failed validation: {'; '.join(result.validation_output)}")
+                return 1
+            print(f"promoted e2e golden case {result.case_id}: {result.case_path} dataset={result.dataset_path}")
             return 0
     except (KeyError, ValueError) as exc:
         print(f"Error: {exc}")

@@ -25,6 +25,14 @@ class PowerBananaCliTests(unittest.TestCase):
             )
         return Path(handle.name)
 
+    def write_region_revenue_csv(self, path: Path) -> None:
+        path.write_text(
+            "region,revenue\n"
+            "north,500\n"
+            "south,900\n",
+            encoding="utf-8",
+        )
+
     def write_pending_suggestion(self, store_path: Path) -> None:
         VocabularySuggestionRepository(store_path).save_pending(
             VocabularySuggestion(
@@ -253,3 +261,59 @@ class PowerBananaCliTests(unittest.TestCase):
             self.assertEqual(promote_exit, 0)
             self.assertIn("promoted planner golden case", text)
             self.assertTrue((cases_dir / "region_group_by_metric_analysis.json").exists())
+
+    def test_vocab_promote_e2e_golden_creates_valid_golden_case(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            store_path = root / "vocabulary_suggestions.jsonl"
+            terms_path = root / "analysis_terms.csv"
+            drafts_dir = root / "drafts"
+            cases_dir = root / "golden_cases"
+            dataset_path = root / "region_revenue_source.csv"
+            self.write_pending_suggestion(store_path)
+            self.write_terms_csv(terms_path)
+            self.write_region_revenue_csv(dataset_path)
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                approve_exit = cli.main(
+                    [
+                        "vocab",
+                        "approve",
+                        "vocab_000001",
+                        "--store",
+                        str(store_path),
+                        "--analysis-terms",
+                        str(terms_path),
+                        "--golden-drafts",
+                        str(drafts_dir),
+                    ]
+                )
+
+            self.assertEqual(approve_exit, 0)
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                promote_exit = cli.main(
+                    [
+                        "vocab",
+                        "promote-e2e-golden",
+                        "vocab_000001",
+                        "--store",
+                        str(store_path),
+                        "--golden-cases",
+                        str(cases_dir),
+                        "--analysis-terms",
+                        str(terms_path),
+                        "--dataset",
+                        str(dataset_path),
+                        "--question",
+                        "哪个地区收入最高？",
+                        "--expected-metric",
+                        "revenue",
+                    ]
+                )
+
+            text = stdout.getvalue()
+            self.assertEqual(promote_exit, 0)
+            self.assertIn("promoted e2e golden case", text)
+            self.assertTrue((cases_dir / "region_group_by_metric_question.json").exists())
+            self.assertTrue((cases_dir / "region_group_by_metric_question.csv").exists())

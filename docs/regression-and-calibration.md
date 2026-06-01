@@ -12,6 +12,12 @@ Run:
 python -c "from pathlib import Path; from powerbanana.evals import PlannerGoldenCaseRunner; print(PlannerGoldenCaseRunner(Path('evals/planner_cases')).run_all())"
 ```
 
+Promote a reviewed vocabulary draft into a Planner golden case:
+
+```powershell
+python -m powerbanana.cli vocab promote-golden vocab_000001 --question "哪个地区收入最高？" --matched-signal "收入" --expected-metric revenue
+```
+
 Current coverage:
 
 | Case Type | Purpose |
@@ -30,6 +36,14 @@ Run:
 ```powershell
 python -c "from pathlib import Path; from powerbanana.evals import GoldenCaseRunner; print(GoldenCaseRunner(Path('evals/golden_cases')).run_all())"
 ```
+
+Promote a reviewed vocabulary draft into an end-to-end golden case when you have a synthetic CSV fixture:
+
+```powershell
+python -m powerbanana.cli vocab promote-e2e-golden vocab_000001 --dataset samples\region_revenue.csv --question "哪个地区收入最高？" --expected-metric revenue
+```
+
+The promotion command runs PowerBanana, captures the completed answer and analysis result, copies the synthetic CSV into `evals/golden_cases/`, writes the JSON expectation file, and validates the generated case before keeping it.
 
 Current coverage:
 

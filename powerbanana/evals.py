@@ -65,8 +65,9 @@ class PlannerGoldenCaseSummary:
 
 
 class GoldenCaseRunner:
-    def __init__(self, cases_dir: Path) -> None:
+    def __init__(self, cases_dir: Path, agent: PowerBananaAgent | None = None) -> None:
         self.cases_dir = cases_dir
+        self.agent = agent or PowerBananaAgent()
 
     def run_all(self) -> GoldenCaseSummary:
         results = [self._run_case(path) for path in sorted(self.cases_dir.glob("*.json"))]
@@ -81,7 +82,7 @@ class GoldenCaseRunner:
     def _run_case(self, path: Path) -> GoldenCaseResult:
         data = json.loads(path.read_text(encoding="utf-8"))
         dataset_path = (path.parent / data["dataset"]).resolve()
-        report = PowerBananaAgent().answer(dataset_path, data["question"])
+        report = self.agent.answer(dataset_path, data["question"])
         failures = self._check_report(report, data)
         if not failures:
             return GoldenCaseResult(case_id=data["case_id"], passed=True)
@@ -99,6 +100,14 @@ class GoldenCaseRunner:
         if "expected_top_value" in data:
             actual = report.analysis_result.top_value if report.analysis_result is not None else None
             self._expect_equal(failures, "top_value", actual, data["expected_top_value"])
+        if "expected_analysis_result" in data:
+            analysis = report.analysis_result
+            if analysis is None:
+                failures.append("analysis_result expected but missing")
+            else:
+                for field_name, expected in data["expected_analysis_result"].items():
+                    actual = getattr(analysis, field_name, None)
+                    self._expect_equal(failures, f"analysis_result.{field_name}", actual, expected)
         if "expected_evaluation_verdict" in data:
             self._expect_equal(failures, "evaluation.verdict", report.evaluation.verdict, data["expected_evaluation_verdict"])
         if "expected_evaluation_target_type" in data:

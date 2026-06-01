@@ -110,6 +110,7 @@ python -m powerbanana.cli vocab list
 python -m powerbanana.cli vocab approve vocab_000001 --dry-run
 python -m powerbanana.cli vocab approve vocab_000001
 python -m powerbanana.cli vocab promote-golden vocab_000001 --question "哪个地区收入最高？" --matched-signal "收入" --expected-metric revenue
+python -m powerbanana.cli vocab promote-e2e-golden vocab_000001 --dataset samples\region_revenue.csv --question "哪个地区收入最高？" --expected-metric revenue
 python -m powerbanana.cli vocab reject vocab_000001 --note "Rejected after review"
 ```
 
@@ -134,6 +135,14 @@ Promoted Planner golden cases may include an `expected_analysis_request` block:
 
 This lets a vocabulary expansion prove that the Planner can parse the approved field, not only classify the broad scenario.
 
+End-to-end promotion needs a synthetic CSV fixture:
+
+```powershell
+python -m powerbanana.cli vocab promote-e2e-golden vocab_000001 --dataset samples\region_revenue.csv --question "哪个地区收入最高？" --expected-metric revenue
+```
+
+This command runs the full agent, captures the completed answer, copies the dataset into `evals/golden_cases/`, writes the matching JSON expectation file, and validates the generated case before keeping it.
+
 ## Expansion Governance
 
 The safe expansion loop is:
@@ -147,7 +156,8 @@ The safe expansion loop is:
 7. The approval command validates the CSV and writes a local golden case draft.
 8. Rejected suggestions remain in the local JSONL audit log and do not change CSV vocabulary.
 9. A reviewed Planner golden case is promoted with `powerbanana vocab promote-golden <suggestion_id>`.
-10. Regression tests must pass before the new vocabulary is treated as stable.
+10. A reviewed end-to-end golden case is promoted with `powerbanana vocab promote-e2e-golden <suggestion_id> --dataset <synthetic.csv>`.
+11. Regression tests must pass before the new vocabulary is treated as stable.
 
 This prevents one accidental input from silently changing Planner behavior for everyone.
 

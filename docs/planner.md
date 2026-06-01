@@ -55,12 +55,15 @@ python -m powerbanana.cli vocab list
 python -m powerbanana.cli vocab approve vocab_000001 --dry-run
 python -m powerbanana.cli vocab approve vocab_000001
 python -m powerbanana.cli vocab promote-golden vocab_000001 --question "哪个地区收入最高？" --matched-signal "收入" --expected-metric revenue
+python -m powerbanana.cli vocab promote-e2e-golden vocab_000001 --dataset samples\region_revenue.csv --question "哪个地区收入最高？" --expected-metric revenue
 python -m powerbanana.cli vocab reject vocab_000001 --note "Not needed"
 ```
 
 `--dry-run` prints the exact CSV row without mutating files. Approval appends the reviewed term to `config/analysis_terms.csv`, reloads that CSV, records `validation_status` and `validation_output` in the JSONL suggestion record, and writes a local golden case draft under `runs/golden_case_drafts/`. Rejection updates only the local JSONL review log.
 
 `promote-golden` turns a reviewed draft into a formal Planner golden case under `evals/planner_cases/`. Planner golden cases can now check selected `AnalysisRequest` fields with `expected_analysis_request`, so a promoted group-by term can assert `group_by = region`, not only the high-level scenario.
+
+`promote-e2e-golden` turns a reviewed draft plus a synthetic CSV into a formal end-to-end golden case under `evals/golden_cases/`. It runs PowerBanana first, captures the completed answer and analysis result, copies the CSV fixture, then validates the generated golden case before keeping it.
 
 ## Extension Direction
 
