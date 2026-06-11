@@ -51,7 +51,8 @@ Skills must not decide:
 flowchart TD
     U["User Request"] --> R["Scenario Router"]
     R --> SP["Scenario Pack"]
-    SP --> P["Planner"]
+    SP --> EC["Evaluation Contract"]
+    EC --> P["Planner"]
     P --> CP["Candidate Plan / Workflow / StepPlan"]
     CP --> SV["SkillPolicyValidator"]
     SV --> PV["PlanValidator"]
@@ -230,7 +231,7 @@ It should contain:
 - Merge and fan-in policy.
 - Planner rules or planner adapter.
 - Context policy.
-- Evaluation policy.
+- Evaluation Pack or Evaluation Contract reference.
 - Human Gate policy.
 - Tool policy.
 - Golden cases and calibration cases.
@@ -269,21 +270,175 @@ evaluation_policy:
     - context_security_evaluator
 ```
 
+## Scenario And Evaluation Pack Pairing
+
+A Scenario Pack must be paired with an Evaluation Pack before it can be enabled. The Scenario Pack defines how the business workflow may run. The Evaluation Pack defines how the workflow is judged as correct, safe, partial, blocked, or requiring human review.
+
+Recommended directory shape:
+
+```text
+scenario_packs/
+  contract_payment_review/
+    SCENARIO.md
+    EVALUATION.md
+    golden_cases/
+      valid_payment_review.json
+      missing_payment_terms.json
+    calibration_cases/
+      long_payment_period_should_human_review.json
+      claim_without_evidence_should_block.json
+```
+
+`SCENARIO.md` owns:
+
+- Scenario identity and purpose.
+- Input types.
+- Routing terms.
+- Allowed Skills and versions.
+- Default Task DAG or Workflow DAG.
+- Tool policy.
+- Concurrency policy.
+- Merge and fan-in policy.
+- Human Gate categories.
+
+`EVALUATION.md` owns:
+
+- Baseline evaluators that cannot be disabled.
+- Skill-level evaluator requirements.
+- Scenario-level business rules.
+- Fan-in evaluator requirements.
+- Report-level evaluator requirements.
+- Gate mapping for `pass`, `pass_with_warning`, `return_partial`, `needs_clarification`, `human_review`, and `block`.
+- Golden case and calibration case requirements.
+
+The runtime should compile both files into an Evaluation Contract. The contract is the machine-checked binding between a scenario, its Skills, its expected artifacts, its evaluators, and its gate rules.
+
+Example:
+
+```yaml
+evaluation_contract:
+  scenario_id: contract_payment_review
+  version: 0.1.0
+  required_baseline_evaluators:
+    - schema_evaluator@0.1.0
+    - evidence_coverage_evaluator@0.1.0
+    - context_security_evaluator@0.1.0
+  required_domain_evaluators:
+    - contract_payment_rule_evaluator@0.1.0
+  skill_output_checks:
+    extract_contract_terms@0.1.0:
+      output_schema: ContractTerms
+      required_evaluators:
+        - schema_evaluator@0.1.0
+        - evidence_coverage_evaluator@0.1.0
+    detect_payment_risk@0.1.0:
+      output_schema: PaymentRiskFinding
+      required_evaluators:
+        - contract_payment_rule_evaluator@0.1.0
+        - risk_severity_evaluator@0.1.0
+  gate_rules:
+    - id: missing_payment_terms
+      condition: payment_terms.not_found
+      gate_action: human_review
+    - id: claim_without_evidence
+      condition: report.claims_without_evidence > 0
+      gate_action: block
+    - id: payment_days_over_60
+      condition: payment_days > 60
+      gate_action: human_review
+```
+
+No Scenario Pack may move from `draft` to `enabled` without a valid Evaluation Contract.
+
+## User-Friendly Evaluation Builder
+
+Non-technical users should not write evaluator code or gate rules directly. A Scenario Pack Builder can use an LLM conversation to collect evaluation requirements and generate an Evaluation Pack draft.
+
+The builder should ask questions such as:
+
+1. What does a good final answer need to contain?
+2. Which mistakes are unacceptable?
+3. Which conclusions require evidence or source references?
+4. Which cases should return a partial result instead of a full answer?
+5. Which cases must ask for clarification?
+6. Which cases must go to human review?
+7. Can you provide one good example and one bad example?
+8. What risk levels or business thresholds matter?
+
+The LLM may generate:
+
+- `EVALUATION.md` draft.
+- Structured Evaluation Contract draft.
+- Golden case drafts.
+- Calibration case drafts.
+- Plain-language explanations of linter failures.
+
+The LLM must not:
+
+- Disable baseline evaluators.
+- Mark a high-risk rule as automatically passing.
+- Enable an unregistered evaluator.
+- Approve its own Evaluation Pack.
+- Bypass calibration cases.
+- Treat natural-language evaluation prose as executable policy.
+
+Execution uses only structured frontmatter and YAML blocks that pass linting. Natural-language sections explain intent but do not become runtime rules.
+
+## Evaluation Layering
+
+Evaluation should be layered so every Scenario Pack gets common safety checks and domain-specific checks.
+
+| Layer | Purpose | User configurable |
+|---|---|---|
+| Baseline Evaluation | Schema, evidence, context safety, dataset or source version, ToolGateway boundary | No |
+| Skill Evaluation | Whether each Skill output matches its schema and evidence requirements | Limited by Skill manifest |
+| Scenario Evaluation | Domain-specific business rules and thresholds | Yes, through builder and approval |
+| Fan-in Evaluation | Whether parallel outputs can be safely merged | Yes, through merge policy |
+| Report Evaluation | Whether the final user-facing answer is complete, supported, and safe | Yes, with required baseline checks |
+
+Each layer writes an EvaluationResult to TaskBlackboard. The scheduler uses the strongest gate action when deciding whether to continue, retry, ask for clarification, route to human review, return partial output, or block.
+
+## Scenario Enablement Lifecycle
+
+Scenario Pack status should follow this lifecycle:
+
+```text
+draft
+-> scenario_lint_passed
+-> evaluation_lint_passed
+-> calibration_ready
+-> approved
+-> enabled
+```
+
+Enablement requirements:
+
+- `SCENARIO.md` exists and passes Scenario Pack linting.
+- `EVALUATION.md` exists and passes Evaluation Policy linting.
+- Every Skill output has an evaluator or an explicit human review path.
+- Every high-risk rule has a Human Gate.
+- Every fan-in node has merge and fan-in evaluation rules.
+- At least one positive golden case exists.
+- At least one negative or escalation calibration case exists.
+- An administrator or domain owner approves the pack.
+
 ## Validation Flow
 
 The Planner may choose Skills, but it only creates candidates. Before execution, the framework must validate:
 
 1. The selected Scenario Pack exists and is enabled.
-2. Every Skill exists, is versioned, and is allowed by the Scenario Pack.
-3. Each Skill input can be satisfied by prior outputs, user input, or allowed ToolGateway results.
-4. Tool permissions match the Skill manifest and scenario policy.
-5. Context references are limited to authorized Blackboard, Memory, and dataset views.
-6. Required evaluators are present and versioned.
-7. Human Gate requirements are attached for risky operations.
-8. DAG and Step Plan topology is acyclic and bounded.
-9. Autonomy Policy allows the proposed number of steps, alternatives, retries, and parallelism.
-10. Concurrency Policy allows every parallel-ready layer.
-11. Merge Policy covers any fan-in node or shared logical artifact.
+2. The selected Scenario Pack has a valid paired Evaluation Contract.
+3. Every Skill exists, is versioned, and is allowed by the Scenario Pack.
+4. Each Skill input can be satisfied by prior outputs, user input, or allowed ToolGateway results.
+5. Tool permissions match the Skill manifest and scenario policy.
+6. Context references are limited to authorized Blackboard, Memory, and dataset views.
+7. Required baseline, Skill-level, scenario-level, fan-in, and report evaluators are present and versioned.
+8. Human Gate requirements are attached for risky operations.
+9. DAG and Step Plan topology is acyclic and bounded.
+10. Autonomy Policy allows the proposed number of steps, alternatives, retries, and parallelism.
+11. Concurrency Policy allows every parallel-ready layer.
+12. Merge Policy covers any fan-in node or shared logical artifact.
+13. Golden and calibration case requirements are satisfied for enabled scenarios.
 
 Only a passing candidate becomes a frozen executable plan.
 
@@ -298,6 +453,7 @@ Framework hard constraints:
 - All Skill calls are scheduled by the MainAgent Scheduler and Executor.
 - All outputs that matter are written to TaskBlackboard.
 - Final answers require EvaluationRunner aggregation.
+- Enabled scenarios require a valid paired Evaluation Contract.
 - Writes and high-risk actions require Human Gate.
 - Raw user content remains untrusted unless transformed by verified tools.
 - Parallel nodes cannot read each other's private state or direct messages.
@@ -314,7 +470,8 @@ Skill-declared constraints:
 - Human Gate triggers.
 - Concurrency constraints.
 - Merge and fan-in requirements.
-- Golden case coverage.
+- Evaluation policy references.
+- Golden and calibration requirements.
 
 This split keeps the platform open to new scenarios while preserving safety boundaries.
 
@@ -433,14 +590,17 @@ PowerBanana should migrate incrementally.
 4. Move hardcoded metric requirements into Skill and analysis vocabulary metadata.
 5. Introduce a minimal `sales_channel_analysis` Scenario Pack for the existing path.
 6. Add a Scenario Pack schema and linter before creating additional industry packs.
-7. Let the Planner select the Scenario Pack and Skill chain, while preserving the current fixed fallback.
-8. Introduce a scheduler state model for `pending`, `ready`, `running`, `succeeded`, `failed`, `skipped`, `blocked`, and `needs_human_gate`.
-9. Replace the linear TaskDagExecutor loop with ready-node scheduling while keeping default concurrency at 1.
-10. Add Scenario Pack `concurrency_policy` and enforce it before dispatch.
-11. Add merge and fan-in validation for aggregate nodes.
-12. Enable parallel execution first for low-risk read-only Skills.
-13. Add one non-data-analysis Scenario Pack, such as contract review or ticket triage, to validate cross-industry reuse.
-14. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
+7. Add an Evaluation Pack schema, Evaluation Contract compiler, and EvaluationPolicyLinter.
+8. Create an `EVALUATION.md` for `sales_channel_analysis` and pair it with the first Scenario Pack.
+9. Let the Planner select the Scenario Pack and Skill chain, while preserving the current fixed fallback.
+10. Introduce a scheduler state model for `pending`, `ready`, `running`, `succeeded`, `failed`, `skipped`, `blocked`, and `needs_human_gate`.
+11. Replace the linear TaskDagExecutor loop with ready-node scheduling while keeping default concurrency at 1.
+12. Add Scenario Pack `concurrency_policy` and enforce it before dispatch.
+13. Add merge and fan-in validation for aggregate nodes.
+14. Enable parallel execution first for low-risk read-only Skills.
+15. Add one non-data-analysis Scenario Pack, such as contract review or ticket triage, to validate cross-industry reuse.
+16. Add one user-friendly builder path that collects both scenario requirements and evaluation requirements through guided questions.
+17. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -450,16 +610,21 @@ Tests should cover:
 
 - Skill manifest parsing and validation.
 - Scenario Pack schema and lint validation.
+- Evaluation Pack schema and lint validation.
+- Evaluation Contract compilation from `SCENARIO.md` and `EVALUATION.md`.
+- Rejection of enabled Scenario Packs without a paired Evaluation Contract.
 - Rejection of unknown or disabled Skills.
 - Rejection of Skills that request unauthorized tools.
 - Rejection of missing required evaluators.
 - Rejection of high-risk Skills without Human Gate.
 - Rejection of parallel nodes when Scenario Pack concurrency does not allow them.
 - Rejection of fan-in nodes without an explicit merge policy.
+- Rejection of fan-in nodes without fan-in evaluator coverage.
 - Scheduler tests for ready-node selection, dependency blocking, retry limits, timeout handling, and Human Gate blocking.
 - Blackboard tests for parallel artifact version conflicts and conflict entry creation.
 - Successful execution of the current metric-analysis flow through the new manifest path.
 - Successful execution of at least one non-data-analysis Scenario Pack through the same runtime interfaces.
+- Builder tests that turn user-friendly quality criteria into draft evaluation rules without enabling them automatically.
 - Golden cases that verify selected Scenario Pack, Skill chain, scheduler trace, evaluation gates, and final answer.
 
 ## Non-Goals
@@ -483,5 +648,7 @@ The design is successful when a new low-risk scenario can be added mostly by int
 The scheduler should be able to execute a frozen DAG with at least one parallel ready layer, record deterministic node transitions, block unsafe fan-in, and preserve the current single-chain PowerBanana behavior when concurrency limits are set to 1.
 
 The multi-industry abstraction should be considered validated only after at least two meaningfully different Scenario Packs run through the same scheduler, Blackboard, ToolGateway, EvaluationRunner, and Human Gate interfaces without changing the core orchestration loop.
+
+Every enabled Scenario Pack must have a paired Evaluation Contract that covers baseline checks, Skill outputs, scenario rules, fan-in behavior, report quality, golden cases, and calibration cases. A Scenario Pack without this pairing remains `draft` or `scenario_lint_passed`, never `enabled`.
 
 The framework should become more open, but the acceptance rule remains strict: no Skill result becomes trusted merely because a Skill produced it. It becomes trusted only after the framework records, evaluates, and gates it.
