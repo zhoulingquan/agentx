@@ -274,7 +274,7 @@ Scenario-local Skill rules:
 - Resolves only under that scenario directory.
 - Cannot be referenced by another scenario unless promoted through an explicit review into `skills/global/`.
 - Can use domain terminology and domain evaluators from its owning scenario.
-- Must still use ToolGateway, TaskBlackboard, ContextManager, and EvaluationRunner boundaries.
+- Must still use ToolGateway, TaskBlackboard, ScenarioContextManager, and EvaluationRunner boundaries.
 
 Example Skill references:
 
@@ -496,6 +496,39 @@ Restrictions:
 - The writer can summarize a possible rule or Skill candidate, but activation still goes through rule maintenance.
 
 This turns checkpointing into a governed runtime service instead of an informal memory habit.
+
+## Scenario Context Manager
+
+PowerBanana should introduce a `ScenarioContextManager` as the runtime context compiler that sits between scenario state and every agent call. It is inspired by MiMo-Code's rebuild-context flow, but it must remain scenario-pinned and governance-aware.
+
+Responsibilities:
+
+- Compile a `Scenario Context Bundle` before planning, DAG node execution, sub-agent dispatch, evaluation repair, governance review, and task resume.
+- Add an agent-facing active recall protocol that tells the agent which memory blocks are already loaded and prevents unnecessary whole-file reads.
+- Preserve recent task tail context so an agent can continue after compaction or restart without asking the user what to do next.
+- Apply section-aware token budgets to checkpoint, TaskBlackboard, sub-agent progress, Long-Term Governed Memory, Episode Search results, and governance candidates.
+- Request Episode Search only for an explicit purpose such as `resume_task`, `debugging_hint`, or `exception_learning_prompt`.
+- Label every injected memory item with layer, source ref, allowed use, confidence or freshness, and redaction level.
+- Replace compactable large tool results with artifact refs and short summaries while preserving Human Gates, Evaluation failures, approval previews, and exact-form values.
+
+It must not:
+
+- Read or inject another scenario's memory.
+- Give agents direct SQLite, raw trajectory, or raw transcript access.
+- Treat memory as authority over current TaskBlackboard, EvaluationResults, Human Gates, or Knowledge Base citations.
+- Let a Skill, Scenario Pack, or Planner output weaken context boundaries.
+
+Runtime flow:
+
+```text
+MainAgentScheduler selects next node
+-> ScenarioPathGuard pins scenario root
+-> ScenarioContextManager compiles purpose-specific bundle
+-> Context bundle is attached to main-agent or sub-agent prompt
+-> agent acts through allowed tools
+-> TaskBlackboard records artifacts and events
+-> ScenarioCheckpointWriter reconciles checkpoint and progress
+```
 
 ## Scenario Exception Learning
 
@@ -1015,6 +1048,11 @@ Checkpoint authority drift:
 - A long-running agent may overwrite or misplace state if every sub-agent can write memory files directly.
 - Mitigation: reserve checkpoint, memory, notes, and task progress ownership to ScenarioCheckpointWriter and enforce write allowlists through ScenarioPathGuard.
 
+Context drift:
+
+- A resumed or delegated agent may over-read stale memory, miss the latest checkpoint, or load another scenario's context.
+- Mitigation: route every agent call through ScenarioContextManager, pin context bundles to scenario/version/task, label injected memory by layer and source, and enforce active recall rules that prevent whole-file rereads of already-loaded memory.
+
 ## Production Readiness Requirements
 
 Before treating this as a production multi-industry platform, the following components should exist:
@@ -1028,13 +1066,14 @@ Before treating this as a production multi-industry platform, the following comp
 7. ToolGateway policy with deny-by-default authorization.
 8. ScenarioPathGuard with per-scenario read/write allowlists.
 9. ScenarioCheckpointWriter with checkpoint, memory, notes, and task progress ownership.
-10. GoalJudgeEvaluator for task-level stop conditions.
-11. Exception Learning Assistant backed by ScenarioDream and ScenarioDistill draft-only flows.
-12. Tenant, role, data-classification, and credential-isolation model.
-13. Observability for scheduler transitions, tool calls, checkpoint updates, evaluation outcomes, goal-judge verdicts, and human gates.
-14. Release and rollback process for Scenario Packs and Skill versions.
+10. ScenarioContextManager with Scenario Context Bundle compilation, active recall protocol, and section-aware budgets.
+11. GoalJudgeEvaluator for task-level stop conditions.
+12. Exception Learning Assistant backed by ScenarioDream and ScenarioDistill draft-only flows.
+13. Tenant, role, data-classification, and credential-isolation model.
+14. Observability for scheduler transitions, tool calls, context bundle generation, checkpoint updates, evaluation outcomes, goal-judge verdicts, and human gates.
+15. Release and rollback process for Scenario Packs and Skill versions.
 
-For near-term implementation, the first platform investments should be Scenario Pack schema/linting, Skill manifests with policy validation, deterministic MainAgent Scheduler, ScenarioPathGuard, and a minimal ScenarioCheckpointWriter.
+For near-term implementation, the first platform investments should be Scenario Pack schema/linting, Skill manifests with policy validation, deterministic MainAgent Scheduler, ScenarioPathGuard, a minimal ScenarioCheckpointWriter, and a baseline ScenarioContextManager for task start and resume.
 
 ## Migration Plan
 
@@ -1063,10 +1102,11 @@ PowerBanana should migrate incrementally.
 21. Add a promotion path for turning a scenario-local Skill into a reviewed global Skill.
 22. Add ScenarioPathGuard for scenario file reads and writes.
 23. Add ScenarioCheckpointWriter with scenario-local checkpoint and memory templates.
-24. Add GoalJudgeEvaluator as a task-level stop-condition gate.
-25. Add ScenarioDream for repeated exception summarization and process memory.
-26. Add ScenarioDistill for user-confirmed, draft-only Skill, evaluator, golden case, and calibration case candidates.
-27. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, path-guard decisions, checkpoint updates, exception-learning prompts, goal-judge verdicts, and policy gates.
+24. Add ScenarioContextManager with Scenario Context Bundle generation, active recall protocol, and context budgets.
+25. Add GoalJudgeEvaluator as a task-level stop-condition gate.
+26. Add ScenarioDream for repeated exception summarization and process memory.
+27. Add ScenarioDistill for user-confirmed, draft-only Skill, evaluator, golden case, and calibration case candidates.
+28. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, path-guard decisions, context bundle contents, checkpoint updates, exception-learning prompts, goal-judge verdicts, and policy gates.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -1098,6 +1138,10 @@ Tests should cover:
 - GoalJudgeEvaluator tests for satisfied, missing-evidence, impossible, judge-unavailable, and max-reentry cases.
 - Blackboard tests for parallel artifact version conflicts and conflict entry creation.
 - ScenarioCheckpointWriter tests for progress reconciliation, exact-form preservation, bounded checkpoint sections, and writer allowlists.
+- ScenarioContextManager tests for pinned scenario identity, active recall protocol, section-aware budget clipping, and source-ref labeling.
+- ScenarioContextManager tests rejecting another scenario's memory, raw transcript injection, direct SQLite access, and incompatible `allowed_use`.
+- Resume tests proving recent tail context, checkpoint next action, blocking EvaluationResults, and Human Gates are preserved.
+- Sub-agent dispatch tests proving sub-agents receive only node-relevant context and no unrelated Episodes or evolution candidates.
 - ScenarioDream tests for repeated exception summarization without creating enabled rules.
 - ScenarioDistill tests for user-confirmed draft-only candidates with enough repeated evidence and no auto-activation.
 - Successful execution of the current metric-analysis flow through the new manifest path.

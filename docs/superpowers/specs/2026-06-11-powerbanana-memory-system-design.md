@@ -101,13 +101,137 @@ flowchart TD
     MC --> MP["Memory Policy Gate"]
     MP --> PM["Process Memory"]
     MP --> DC["Skill / Evaluator / Golden Case Drafts"]
-    CP --> CTX["Context Manager"]
+    CP --> CTX["Scenario Context Manager"]
+    ES --> CTX
     PM --> CTX
     CTX --> AG["Main Agent / Sub-agents"]
     KB["Future Knowledge Base"] -. "retrieved knowledge with citations" .-> CTX
 ```
 
 TaskBlackboard remains the current-task fact source. Memory stores summaries, state, and improvement candidates around that fact source.
+
+## Scenario Context Manager
+
+The Scenario Context Manager is the runtime compiler for memory. It does not own long-term storage and it does not execute business actions. Its job is to build a bounded, labeled, scenario-safe `Scenario Context Bundle` before planning, routing, DAG node execution, sub-agent dispatch, evaluation repair, governance review, or task resume.
+
+It should borrow MiMo-Code's rebuild-context discipline:
+
+- Inject a clear statement that the included memory blocks are already loaded.
+- Tell the agent not to re-read whole memory files that are already present.
+- Preserve the newest task tail so the agent resumes without asking what to do next.
+- Use section-aware budgets instead of cutting arbitrary text.
+- Convert large, regeneratable tool results into artifact references and summaries.
+- Keep a memory keys index so the agent can request targeted retrieval without pulling every file.
+
+PowerBanana adapts these ideas with stricter enterprise boundaries:
+
+- The bundle is always pinned to one `scenario_id`, `scenario_version`, `evaluation_contract_version`, and `task_id`.
+- Every included item must have a layer, source ref, allowed use, confidence or freshness marker, and redaction level.
+- The bundle must not include raw uploaded documents, raw transcripts, unrestricted SQL results, or another scenario's files.
+- The bundle must not weaken ScenarioPathGuard, MemoryPathGuard, Evaluation gates, Human Gates, or Knowledge Base authority.
+
+### Scenario Context Bundle
+
+Suggested bundle shape:
+
+```yaml
+scenario_context_bundle:
+  identity:
+    scenario_id: contract_payment_review
+    scenario_version: 0.3.0
+    evaluation_contract_version: 0.2.0
+    task_id: task_001
+    scenario_root: scenario_packs/contract_payment_review
+  active_recall_protocol:
+    already_loaded:
+      - memory/CHECKPOINT.md
+      - memory/MEMORY.md
+    whole_file_reread_policy: disallow_unless_missing_tail
+    targeted_lookup_policy: use_context_manager_or_grep_by_keyword
+  short_term_runtime:
+    taskblackboard_summary_ref: blackboard://task_001/current
+    checkpoint_ref: memory/CHECKPOINT.md
+    dag_state_ref: blackboard://task_001/dag
+    subagent_progress_refs:
+      - memory/tasks/task_001/progress.md
+  blocking_controls:
+    evaluation_results:
+      - eval_result_003
+    human_gates:
+      - human_gate_002
+  long_term_governed:
+    process_memory_snapshot_ref: memory/MEMORY.md
+  mid_term_episodic:
+    retrieved_episodes:
+      - episode_2026_06_11_001
+  evolution_loop:
+    candidates_for_user_decision:
+      - exception_001
+  future_knowledge_base:
+    retrieved_refs: []
+```
+
+Bundle sections should be ordered by runtime authority:
+
+1. Scenario identity and pinned versions.
+2. User intent and current task objective.
+3. Blocking EvaluationResults and Human Gates.
+4. Current TaskBlackboard and DAG state.
+5. Checkpoint next action and sub-agent progress ledger.
+6. Active Long-Term Governed Memory snapshot.
+7. Retrieved Mid-Term Episodes.
+8. Evolution candidates, only in governance or user-decision flows.
+9. Future Knowledge Base citations, when enabled.
+
+### Agent-Facing Context Protocol
+
+Every main-agent or sub-agent prompt should include a compact protocol derived from the bundle:
+
+```text
+You are operating inside scenario <scenario_id>@<scenario_version>.
+The context blocks below are already loaded. Do not read whole memory files again.
+Use targeted lookup only when a specific missing detail is needed.
+Request Episode Search through Context Manager; do not query SQLite directly.
+Do not write checkpoint, MEMORY.md, Episode, or candidate files.
+Treat memory as hints. Current tool evidence, TaskBlackboard, EvaluationResults,
+Human Gates, and Knowledge Base citations override memory.
+```
+
+Sub-agents should receive the smallest bundle that satisfies their node:
+
+- Scenario identity.
+- Assigned DAG node or task.
+- Relevant TaskBlackboard refs.
+- Required Skill and evaluator constraints.
+- Any needed checkpoint or progress refs.
+- No unrelated Episodes, no unrelated process memory, and no evolution candidates unless the sub-agent is a governance reviewer.
+
+### Context Compilation Flow
+
+```text
+runtime requests context for a purpose
+-> ScenarioPathGuard pins scenario root
+-> MemoryPathGuard pins memory scope
+-> Context Manager gathers required sources by purpose
+-> section-aware budgeter clips each source
+-> Episode Search runs only if the purpose requests it
+-> safety scanner rejects unsafe memory or retrieved summaries
+-> conflict resolver applies authority order
+-> Context Bundle is labeled and emitted
+```
+
+Allowed purposes:
+
+- `plan_task`
+- `resume_task`
+- `execute_dag_node`
+- `dispatch_subagent`
+- `evaluate_output`
+- `repair_after_evaluation`
+- `ask_user_about_exception`
+- `governance_review`
+
+Context Manager must reject a request whose purpose is missing or incompatible with the requested memory item's `allowed_use`.
 
 ## Four-Layer Memory Model
 
@@ -458,6 +582,48 @@ It must not:
 - Create enabled rules, evaluators, or Skills.
 - Treat memory as evidence for final business claims.
 
+### Sub-Agent Progress Reconciliation
+
+PowerBanana should borrow MiMo-Code's progress reconciliation pattern for parallel work, but keep stricter write ownership. Sub-agents report task-local progress through TaskBlackboard or a task-local progress event. `ScenarioCheckpointWriter` is the component that materializes those reports into `memory/tasks/<task_id>/progress.md` and reconciles them into the scenario checkpoint.
+
+Each writer-created progress file should include machine-readable freshness metadata:
+
+```markdown
+---
+task_id: task_001.extract_appendix
+subagent_id: extract_appendix_worker_01
+written_at: 2026-06-11T10:20:00+08:00
+scenario_id: contract_payment_review
+---
+
+## Current Status
+in_progress
+
+## Evidence And Outputs
+- artifact://task_001/appendix_terms.json
+
+## Exact Values To Preserve
+- evaluator_id: payment_terms_presence@0.2.0
+
+## Findings Worth Promoting
+- Appendix checks resolved the missing payment terms fallback.
+```
+
+The writer should track reconciliation markers in `CHECKPOINT.md`:
+
+```text
+(progress: memory/tasks/task_001.extract_appendix/progress.md, last_reconciled_written_at: 2026-06-11T10:20:00+08:00)
+```
+
+Reconciliation rules:
+
+- Read only sub-agent progress files whose `written_at` is newer than the checkpoint marker.
+- Integrate status, blockers, artifact refs, and exact-form values into checkpoint sections.
+- Preserve exact-form values byte-for-byte when they are needed for replay or evaluator matching.
+- Do not let sub-agent progress write directly into `MEMORY.md` or Long-Term Governed Memory.
+- If a sub-agent progress item suggests a durable lesson, record it as a candidate for Episode or process memory promotion.
+- If progress is missing or malformed, mark the node as requiring recovery rather than inventing state.
+
 ## MemoryPathGuard
 
 All memory access goes through `MemoryPathGuard`.
@@ -540,6 +706,14 @@ The SQLite file is derived state:
 - It must be scoped to one scenario directory.
 - It must be protected by `MemoryPathGuard`.
 
+The indexer should use a lazy reconcile model:
+
+- Before search, compare indexed fingerprints against source file size and modification time.
+- Index new or changed Episode summaries.
+- Prune index rows whose source files no longer exist.
+- Keep source JSON and structured records as the source of truth.
+- Treat the SQLite file as disposable cache.
+
 Suggested indexed fields:
 
 ```sql
@@ -584,10 +758,36 @@ Search flow:
 ```text
 Context Manager requests similar-task context
 -> MemoryPathGuard pins scenario_id and scenario_root
+-> Episode index reconciles changed source files
 -> EpisodeSearch queries SQLite FTS5
 -> results are filtered by retention, redaction, and allowed_use
 -> results are ranked and clipped to token budget
 -> Context Manager injects summaries with source refs only
+```
+
+FTS query rules:
+
+- Tokenize user or system queries into Unicode letter, number, and underscore runs.
+- Phrase-quote each token before passing it to FTS5, so punctuation and special characters cannot crash the MATCH parser.
+- Join tokens with OR to preserve recall.
+- Use BM25 ranking to prefer records matching more and rarer tokens.
+- Apply a relative score floor, for example `0.15` of the top result, to remove common-token noise without losing all results in a small corpus.
+
+Suggested search policy:
+
+```yaml
+episode_search_policy:
+  backend: sqlite_fts5
+  lazy_reconcile: true
+  query_tokenization: unicode_word_runs
+  query_join: OR
+  ranking: bm25
+  relative_score_floor: 0.15
+  max_results: 8
+  max_tokens: 800
+  require_scope_filter: true
+  require_redaction_filter: true
+  require_allowed_use: true
 ```
 
 Search results should include:
@@ -891,6 +1091,78 @@ If token budget is exceeded, the priority order is:
 
 Context Manager must label every injected memory item with its layer, source ref, allowed use, and confidence. Unlabeled memory cannot enter prompts.
 
+## Context Budgeting And Rebuild
+
+PowerBanana should use section-aware context budgeting rather than arbitrary text truncation. The goal is to keep the context bundle useful after long tasks, compaction, retries, or multi-agent execution without flooding the model with raw history.
+
+Suggested bundle section budgets:
+
+```yaml
+scenario_context_bundle_budget:
+  scenario_identity_tokens: 300
+  active_user_intent_tokens: 500
+  blocking_controls_tokens: 800
+  taskblackboard_summary_tokens: 1200
+  checkpoint_tokens: 900
+  subagent_progress_tokens: 700
+  long_term_governed_memory_tokens: 500
+  retrieved_episode_tokens: 800
+  evolution_candidate_tokens: 500
+  memory_keys_index_tokens: 400
+  future_knowledge_refs_tokens: 800
+```
+
+Section-aware rules:
+
+- Preserve section headers and source refs even when bodies are clipped.
+- Prefer the current node, blocking controls, and next action over older narrative.
+- When a section exceeds its budget, keep a concise head plus a pointer to the full source.
+- Do not split exact-form values such as thresholds, rule IDs, evaluator IDs, dataset versions, or file paths.
+- Do not split tool-call and tool-result pairs needed to understand current state.
+- Do not compact Human Gate decisions, approval records, or write-action previews.
+
+Tail preservation should keep the most recent execution context:
+
+```yaml
+tail_preservation_policy:
+  min_recent_tokens: 10000
+  max_recent_tokens_soft: 20000
+  min_recent_text_messages: 5
+  preserve_tool_call_pairs: true
+  preserve_human_gate_turns: true
+  preserve_evaluation_repair_turns: true
+```
+
+Rebuild flow:
+
+```text
+context boundary chosen
+-> ScenarioCheckpointWriter settles or times out visibly
+-> Context Manager compiles Scenario Context Bundle
+-> synthetic continuation message is inserted or equivalent prompt section is emitted
+-> recent tail is preserved
+-> compactable tool result bodies are replaced with artifact refs and short summaries
+-> agent resumes directly from the latest state
+```
+
+Compactable content:
+
+- Read-only file previews that can be reopened by artifact ref.
+- Large data snapshots already stored in TaskBlackboard artifacts.
+- Search result bodies already summarized and source-linked.
+- Tool success confirmations that add no decision state.
+
+Non-compactable content:
+
+- User confirmations.
+- Human Gate decisions.
+- Evaluation failures and repair instructions.
+- Approval previews for write actions.
+- Exact-form values required for replay.
+- Current task objective and next action.
+
+The continuation prompt should explicitly say that the bundle is loaded, recent messages are real history, and the agent should resume directly rather than recapping or asking what to do next.
+
 ## Memory Safety
 
 Because memory can enter prompts, every memory item must be treated as potentially unsafe until validated.
@@ -935,6 +1207,8 @@ Phase 0: current baseline
 Phase 1:
 
 - Short-Term Runtime Memory.
+- Scenario Context Manager baseline.
+- Scenario Context Bundle for task start and resume.
 - Scenario-local checkpoints.
 - Task progress.
 - Notes.
@@ -947,6 +1221,8 @@ Phase 2:
 
 - Mid-Term Episodic Memory.
 - Scenario-local SQLite + FTS5 Episode Search index.
+- Lazy reconcile for Episode Search index.
+- Unicode tokenization, phrase-quoted FTS5 queries, BM25 ranking, and relative score floor.
 - Retention, redaction, and rebuild policies for Episodes.
 - Search only through Context Manager.
 
@@ -956,6 +1232,8 @@ Phase 3:
 - Process Memory with strict `allowed_use`.
 - Memory promotion, demotion, expiry, supersession, and rollback metadata.
 - Frozen `MEMORY.md` snapshots generated from approved records.
+- Section-aware context budgeting.
+- Tail preservation and compactable tool-result summaries.
 
 Phase 4:
 
@@ -979,9 +1257,18 @@ Tests should cover:
 - Rejection of ordinary-agent writes to checkpoint-owned files.
 - Short-Term Runtime Memory closure creating an Episode candidate only after task finalization.
 - Concurrent sub-agent progress reconciliation without corrupting checkpoint-owned files.
+- Sub-agent progress reports materialized only by `ScenarioCheckpointWriter`.
+- Progress reconciliation based on `written_at` and `last_reconciled_written_at`.
 - Checkpoint reconstruction from `CHECKPOINT.md` and task progress.
+- Scenario Context Bundle includes pinned scenario identity and active recall protocol.
+- Context Manager refuses whole-file re-read instructions for memory already loaded unless a missing tail is explicitly requested.
+- Section-aware context budgeting preserves headers, source refs, and exact-form values.
+- Tail preservation keeps recent message and tool-call continuity.
+- Microcompact replaces only compactable tool result bodies and preserves Human Gates, Evaluation repair turns, and approvals.
 - Episode creation without raw source document leakage.
 - SQLite + FTS5 Episode Search indexing only redacted summary fields.
+- SQLite + FTS5 query builder handles punctuation, CJK tokens, and empty queries safely.
+- Episode Search uses scope filters, BM25 ranking, relative score floor, and result limits.
 - Episode Search results filtered by scenario, retention, redaction level, and allowed use.
 - Rebuilding `index/episode_index.sqlite` from Episodes and structured records.
 - Small-capacity `MEMORY.md` budget enforcement.
