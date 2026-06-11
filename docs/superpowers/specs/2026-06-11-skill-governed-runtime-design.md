@@ -482,7 +482,7 @@ Responsibilities:
 - Maintain the current task intent, active Scenario Pack version, Evaluation Contract version, and next concrete action.
 - Record scheduler node states, running sub-agents, pending Human Gates, and blocked dependencies.
 - Reconcile sub-agent progress into scenario task progress.
-- Promote only durable, verified scenario knowledge into scenario `MEMORY.md`.
+- Promote only durable, verified process lessons into scenario `MEMORY.md`.
 - Keep exact-form values such as thresholds, rule IDs, evaluator IDs, dataset versions, and file paths byte-for-byte when they are needed for replay.
 - Keep checkpoint sections bounded so context reconstruction can inject high-signal state instead of raw history.
 
@@ -495,37 +495,77 @@ Restrictions:
 
 This turns checkpointing into a governed runtime service instead of an informal memory habit.
 
-## Scenario Dream And Distill
+## Scenario Exception Learning
 
-The framework should support controlled self-improvement, but only as draft generation. Two maintenance passes can be added:
+PowerBanana targets relatively fixed enterprise business workflows. Therefore the MiMo-Code-inspired `dream` and `distill` ideas should be narrowed into a governed exception-learning mechanism, not an open-ended self-improvement loop.
+
+User-facing names should be:
+
+- Exception Learning Assistant.
+- Skill Improvement Suggestions.
+- Process Exception Suggestions.
+
+Internal responsibilities:
 
 `ScenarioDream`:
 
-- Reads recent scenario checkpoints, task progress, evaluation reports, Human Gate decisions, and replay snapshots.
-- Consolidates durable scenario knowledge into `memory/MEMORY.md`.
-- Removes stale or contradicted scenario notes.
-- Flags repeated failures, recurring ambiguity, and missing domain vocabulary.
+- Reads recent scenario checkpoints, task progress, Episode summaries, EvaluationResults, Human Gate decisions, and replay snapshots.
+- Summarizes repeated special cases inside the fixed scenario workflow.
+- Flags repeated evaluator failures, repeated Human Gate reasons, repeated user corrections, and repeated fallback paths.
+- Writes only process memory and exception candidates; it does not store industry knowledge.
 
 `ScenarioDistill`:
 
-- Looks for repeated manual workflows, repeated correction patterns, recurring evaluator failures, and common human review reasons.
-- Produces candidate local Skills, evaluator rules, golden cases, calibration cases, or promotion candidates for global Skills.
-- Creates drafts under `drafts/` or `changes/`, never enabled artifacts.
-- Requires evidence from at least two tasks, a stable input/output shape, and a clear stopping condition before proposing a reusable asset.
+- Turns high-confidence repeated exceptions into user-facing improvement proposals.
+- Asks whether the exception should modify an existing Skill, create a new scenario-local Skill, add a Human Gate rule, add or adjust an evaluator, or add golden/calibration cases.
+- Creates drafts under `drafts/`, `changes/`, or scenario-local memory candidate folders; it never creates enabled artifacts.
+- Requires repeated evidence, a stable input/output shape, and a clear expected behavior before proposing a reusable asset.
 
-Distillation output must enter the same lifecycle as user-requested changes:
+Example trigger policy:
+
+```yaml
+exception_learning_policy:
+  min_occurrences: 3
+  time_window_days: 30
+  min_impact_level: medium
+  require_human_confirmation_signal: true
+  require_evaluation_signal: true
+  auto_create_skill: false
+  auto_modify_skill: false
+```
+
+Example user-facing question:
 
 ```text
-candidate discovered
--> create draft under scenario directory
--> lint Scenario Pack and Evaluation Pack
+In the last 30 days, this scenario saw 3 tasks where payment terms were
+missing from the main document but later found in an appendix.
+
+Should PowerBanana handle this as part of the workflow?
+
+Options:
+1. Add this behavior to the existing Skill.
+2. Create a new local Skill for appendix checks.
+3. Add a Human Gate rule only.
+4. Add golden/calibration cases only.
+5. Ignore this pattern for now.
+```
+
+Confirmed improvements must enter the same lifecycle as user-requested changes:
+
+```text
+repeated exception discovered
+-> ask user whether to handle it
+-> create Skill/evaluator/golden/calibration draft under scenario directory
+-> lint Skill manifest, Scenario Pack, and Evaluation Pack
 -> compile Evaluation Contract
 -> run affected golden and calibration cases
 -> request approval
--> activate or discard
+-> activate new version or discard draft
 ```
 
-This lets the agent learn from repeated work while preserving scenario isolation, auditability, and human approval.
+This lets fixed business workflows adapt to real operational exceptions while preserving scenario isolation, auditability, and human approval.
+
+See [PowerBanana Memory System Design](2026-06-11-powerbanana-memory-system-design.md) for the detailed Memory, Episode, Exception Candidate, and Knowledge Base boundary design.
 
 ## Scenario And Evaluation Pack Pairing
 
@@ -963,9 +1003,9 @@ Parallel fan-in:
 - Parallel agents may produce conflicting claims or partially evaluated artifacts.
 - Mitigation: require merge policy, conflict entries, artifact versions, and fan-in evaluators before enabling broad parallelism.
 
-Self-improvement drift:
+Exception-learning drift:
 
-- Memory consolidation and workflow distillation may overfit to recent tasks or promote accidental behavior into policy.
+- Exception learning may overfit to recent tasks or promote accidental behavior into Skill or evaluator drafts.
 - Mitigation: keep ScenarioDream and ScenarioDistill read-only over raw history, draft-only for generated assets, and subject to linting, calibration, approval, and version pinning.
 
 Checkpoint authority drift:
@@ -987,7 +1027,7 @@ Before treating this as a production multi-industry platform, the following comp
 8. ScenarioPathGuard with per-scenario read/write allowlists.
 9. ScenarioCheckpointWriter with checkpoint, memory, notes, and task progress ownership.
 10. GoalJudgeEvaluator for task-level stop conditions.
-11. ScenarioDream and ScenarioDistill maintenance flows with draft-only output.
+11. Exception Learning Assistant backed by ScenarioDream and ScenarioDistill draft-only flows.
 12. Tenant, role, data-classification, and credential-isolation model.
 13. Observability for scheduler transitions, tool calls, checkpoint updates, evaluation outcomes, goal-judge verdicts, and human gates.
 14. Release and rollback process for Scenario Packs and Skill versions.
@@ -1022,9 +1062,9 @@ PowerBanana should migrate incrementally.
 22. Add ScenarioPathGuard for scenario file reads and writes.
 23. Add ScenarioCheckpointWriter with scenario-local checkpoint and memory templates.
 24. Add GoalJudgeEvaluator as a task-level stop-condition gate.
-25. Add ScenarioDream for scenario memory consolidation.
-26. Add ScenarioDistill for draft-only Skill, evaluator, golden case, and calibration case candidates.
-27. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, path-guard decisions, checkpoint updates, goal-judge verdicts, and policy gates.
+25. Add ScenarioDream for repeated exception summarization and process memory.
+26. Add ScenarioDistill for user-confirmed, draft-only Skill, evaluator, golden case, and calibration case candidates.
+27. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, path-guard decisions, checkpoint updates, exception-learning prompts, goal-judge verdicts, and policy gates.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -1056,8 +1096,8 @@ Tests should cover:
 - GoalJudgeEvaluator tests for satisfied, missing-evidence, impossible, judge-unavailable, and max-reentry cases.
 - Blackboard tests for parallel artifact version conflicts and conflict entry creation.
 - ScenarioCheckpointWriter tests for progress reconciliation, exact-form preservation, bounded checkpoint sections, and writer allowlists.
-- ScenarioDream tests for memory consolidation without creating enabled rules.
-- ScenarioDistill tests for draft-only candidates with enough repeated evidence and no auto-activation.
+- ScenarioDream tests for repeated exception summarization without creating enabled rules.
+- ScenarioDistill tests for user-confirmed draft-only candidates with enough repeated evidence and no auto-activation.
 - Successful execution of the current metric-analysis flow through the new manifest path.
 - Successful execution of at least one non-data-analysis Scenario Pack through the same runtime interfaces.
 - Builder tests that turn user-friendly quality criteria into draft evaluation rules without enabling them automatically.

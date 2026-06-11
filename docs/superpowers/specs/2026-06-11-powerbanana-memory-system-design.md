@@ -1,0 +1,397 @@
+# PowerBanana Memory System Design
+
+## Goal
+
+PowerBanana needs a Memory System that supports enterprise business workflows without turning memory into an uncontrolled business knowledge store.
+
+The current boundary is:
+
+- Memory stores runtime continuity, process experience, and repeated exception candidates.
+- Knowledge Base will later store industry knowledge, enterprise policies, domain references, and authoritative business facts.
+
+This design is inspired by MiMo-Code's checkpoint, task progress, and memory maintenance patterns, but narrows them for PowerBanana's governed, scenario-based runtime.
+
+## Non-Goal: Industry Knowledge Storage
+
+PowerBanana Memory must not store:
+
+- Industry regulations or professional knowledge.
+- Contract clause interpretations.
+- Enterprise policy documents.
+- Authoritative metric definitions.
+- Data dictionary ownership or long-term data semantics.
+- Domain facts that should be cited from a Knowledge Base.
+
+When future Knowledge Base support is added, Context Manager will combine:
+
+- Memory: how the agent should continue work and improve the workflow.
+- Knowledge Base: what business knowledge supports the answer.
+
+Memory may store references to Knowledge Base results or tool evidence, but it must not become the source of truth for that knowledge.
+
+## Design Principle
+
+Memory has three jobs:
+
+1. Task continuity: preserve where the current task, DAG, sub-agents, Human Gates, and EvaluationResults are.
+2. Context recovery: rebuild useful context across compaction, long-running tasks, and resumed sessions.
+3. Process improvement: detect repeated exceptions in fixed business workflows and ask whether they should become Skill, evaluator, golden case, or calibration case changes.
+
+Memory must never override:
+
+- Current tool evidence.
+- TaskBlackboard artifacts.
+- User confirmations.
+- EvaluationResults.
+- Human Gate decisions.
+- Future Knowledge Base retrieval results.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    U["User Task"] --> BB["TaskBlackboard"]
+    BB --> CW["ScenarioCheckpointWriter"]
+    CW --> CP["Checkpoint / Progress / Notes"]
+    BB --> ES["Episode Store"]
+    ES --> EL["Exception Learning Assistant"]
+    EL --> MC["Memory Candidate Pipeline"]
+    MC --> MP["Memory Policy Gate"]
+    MP --> PM["Process Memory"]
+    MP --> DC["Skill / Evaluator / Golden Case Drafts"]
+    CP --> CTX["Context Manager"]
+    PM --> CTX
+    CTX --> AG["Main Agent / Sub-agents"]
+    KB["Future Knowledge Base"] -. "retrieved knowledge with citations" .-> CTX
+```
+
+TaskBlackboard remains the current-task fact source. Memory stores summaries, state, and improvement candidates around that fact source.
+
+## Directory Shape
+
+Memory is scenario-local by default:
+
+```text
+scenario_packs/
+  <scenario_id>/
+    memory/
+      CHECKPOINT.md
+      MEMORY.md
+      notes.md
+      tasks/
+        <task_id>/
+          progress.md
+      episodes/
+        <episode_id>.json
+      candidates/
+        <candidate_id>.json
+      distill/
+        skill_candidates/
+        evaluator_candidates/
+        golden_case_candidates/
+        calibration_case_candidates/
+```
+
+`MEMORY.md` is a human-readable scenario process memory summary, not a domain knowledge file.
+
+## Memory Types
+
+| Type | Stores | Lifetime | Runtime Use |
+|---|---|---|---|
+| TaskBlackboard | Current task artifacts, tool results, traces, EvaluationResults | Task | Current-task fact source |
+| Checkpoint | Intent, next action, DAG state, sub-agent state, gates | Task/session | Recovery |
+| Task Progress | Per-task and per-sub-agent progress | Task/session | Recovery and audit |
+| Notes | Temporary scratch notes | Task/session | Writer-owned scratch |
+| Episode | Closed task summary, failure/fix summary, evaluation outcome summary | Short to medium | Similar task recovery and exception detection |
+| Process Memory | Stable workflow preference or process lesson | Medium to long | Context hint only |
+| Exception Candidate | Repeated special case in a fixed workflow | Until accepted/discarded | User confirmation |
+| Distill Candidate | Draft Skill/evaluator/golden/calibration change | Until approved/discarded | Governance workflow only |
+
+## ScenarioCheckpointWriter
+
+`ScenarioCheckpointWriter` is the only writer for checkpoint-owned files:
+
+- `memory/CHECKPOINT.md`
+- `memory/notes.md`
+- `memory/tasks/<task_id>/progress.md`
+
+It records:
+
+- Active user intent.
+- Pinned Scenario Pack and Evaluation Contract versions.
+- Current DAG node states.
+- Running sub-agents and their progress.
+- Pending Human Gates.
+- Blocking EvaluationResults.
+- Next concrete action.
+- References to TaskBlackboard artifacts and replay snapshots.
+
+It must not:
+
+- Modify enabled `SCENARIO.md`, `EVALUATION.md`, or Skill files.
+- Store industry knowledge.
+- Create enabled rules, evaluators, or Skills.
+- Treat memory as evidence for final business claims.
+
+## MemoryPathGuard
+
+All memory access goes through `MemoryPathGuard`.
+
+It enforces:
+
+- Every read and write is bound to a pinned `scenario_id`.
+- A scenario cannot read another scenario's checkpoint, progress, episode, candidate, or process memory.
+- Ordinary agents cannot write checkpoint-owned files.
+- Memory candidates cannot write directly into active process memory.
+- Draft Skill or evaluator changes are written only under scenario-local `distill/` or `changes/`.
+
+This guard complements `ScenarioPathGuard`. `ScenarioPathGuard` protects scenario files generally; `MemoryPathGuard` protects memory-specific ownership and lifecycle rules.
+
+## Episode Store
+
+An episode is a structured closed-task summary.
+
+It may include:
+
+- Task goal.
+- Scenario and version.
+- DAG path executed.
+- Skills used.
+- Tool evidence refs.
+- EvaluationResult summaries.
+- Human Gate decisions.
+- User corrections.
+- Special cases encountered.
+- Final outcome.
+
+It must not include:
+
+- Raw uploaded files.
+- Full transcripts.
+- Industry knowledge text copied from source documents.
+- Sensitive values unless allowed by retention policy and redaction.
+
+Example:
+
+```json
+{
+  "episode_id": "episode_2026_06_11_001",
+  "scenario_id": "contract_payment_review",
+  "task_id": "task_001",
+  "workflow_path": ["profile_document", "extract_contract_terms", "detect_payment_risk"],
+  "special_cases": [
+    {
+      "case_type": "appendix_needed",
+      "summary": "Main document lacked payment terms, but user pointed to appendix."
+    }
+  ],
+  "evaluation_summary": {
+    "gate_action": "human_review",
+    "blocking_issues": ["missing_payment_terms"]
+  },
+  "user_corrections": [
+    "Check appendix before marking payment terms missing."
+  ]
+}
+```
+
+## Exception Learning Assistant
+
+PowerBanana business flows are relatively fixed. Therefore the learning loop should focus on repeated special cases inside those fixed flows, not on open-ended self-improvement.
+
+Internally, this replaces the broad meaning of `ScenarioDream` and `ScenarioDistill`:
+
+- `ScenarioDream` summarizes repeated exceptions and process signals from episodes.
+- `ScenarioDistill` turns high-confidence repeated exceptions into user-facing improvement proposals.
+
+User-facing names should be:
+
+- Exception Learning Assistant.
+- Skill Improvement Suggestions.
+- Process Exception Suggestions.
+
+## Repeated Exception Triggers
+
+The system should not ask the user after every odd case. It should wait for repeated, meaningful signals.
+
+Example policy:
+
+```yaml
+exception_learning_policy:
+  min_occurrences: 3
+  time_window_days: 30
+  min_impact_level: medium
+  require_human_confirmation_signal: true
+  require_evaluation_signal: true
+  auto_create_skill: false
+  auto_modify_skill: false
+```
+
+Trigger signals include:
+
+- The same Human Gate reason appears repeatedly.
+- The same evaluator failure appears repeatedly.
+- The user makes the same correction multiple times.
+- The same Skill produces the same kind of incomplete output.
+- The same DAG node repeatedly enters fallback.
+- The same input shape repeatedly needs an extra step.
+
+## User Confirmation Flow
+
+When a repeated exception is detected, PowerBanana should ask in business language:
+
+```text
+In the last 30 days, this scenario saw 3 tasks where payment terms were
+missing from the main document but later found in an appendix.
+
+Should PowerBanana handle this as part of the workflow?
+
+Options:
+1. Add this behavior to the existing Skill.
+2. Create a new local Skill for appendix checks.
+3. Add a Human Gate rule only.
+4. Add golden/calibration cases only.
+5. Ignore this pattern for now.
+```
+
+The user response creates a draft. It does not change runtime behavior directly.
+
+## Exception Candidate Record
+
+```json
+{
+  "candidate_id": "exception_001",
+  "scenario_id": "contract_payment_review",
+  "type": "repeated_exception",
+  "summary": "Payment terms were missing in the main document but found in an appendix in 3 recent tasks.",
+  "occurrence_count": 3,
+  "time_window_days": 30,
+  "evidence_refs": [
+    "episode_001",
+    "episode_004",
+    "episode_007"
+  ],
+  "impacted_skill": "local:extract_contract_terms@0.1.0",
+  "suggested_actions": [
+    "modify_existing_skill",
+    "add_calibration_case"
+  ],
+  "status": "pending_user_decision"
+}
+```
+
+## Candidate Actions
+
+PowerBanana can propose:
+
+- Modify an existing scenario-local Skill.
+- Create a new scenario-local Skill.
+- Add a Human Gate rule.
+- Add or adjust an evaluator.
+- Add golden cases.
+- Add calibration cases.
+- Ignore or suppress the pattern.
+
+It must not:
+
+- Automatically modify a Skill.
+- Automatically create an enabled Skill.
+- Promote a local Skill to global.
+- Store the exception as industry knowledge.
+- Treat repeated user corrections as authoritative domain policy without approval.
+
+## Skill Change Lifecycle
+
+When the user chooses to modify or create a Skill:
+
+```text
+user confirms exception candidate
+-> create Skill change draft
+-> generate paired evaluator or golden/calibration case drafts when needed
+-> lint Skill manifest and Scenario Pack
+-> run affected golden and calibration cases
+-> request domain-owner or administrator approval
+-> publish new local Skill version or discard draft
+```
+
+Existing Skill example:
+
+```text
+local:extract_contract_terms@0.1.0
+-> draft change
+-> local:extract_contract_terms@0.2.0
+```
+
+New Skill example:
+
+```text
+local:check_contract_appendix@0.1.0
+```
+
+New Skills are scenario-local by default. Promotion to global requires separate multi-scenario evidence, review, tests, versioning, and approval.
+
+## Context Manager Rules
+
+Memory enters prompts only through Context Manager.
+
+Context Manager may inject:
+
+- Checkpoint state needed for continuation.
+- Task progress summaries.
+- Process Memory relevant to report format or workflow behavior.
+- Exception candidates when asking the user for confirmation.
+
+Context Manager must not inject:
+
+- Raw episode transcripts.
+- Unapproved exception candidates as instructions.
+- Distill drafts as active rules.
+- Memory items with `allowed_use` incompatible with the current node.
+- Any memory item that conflicts with current TaskBlackboard evidence or EvaluationResults.
+
+## Phased Rollout
+
+Phase 1:
+
+- Scenario-local checkpoints.
+- Task progress.
+- Notes.
+- Episode summaries.
+- MemoryPathGuard.
+- No long-term automatic writes.
+
+Phase 2:
+
+- Exception Learning Assistant.
+- Exception Candidate records.
+- Process Memory with strict `allowed_use`.
+- Draft-only Skill, evaluator, golden case, and calibration case suggestions.
+
+Phase 3:
+
+- Knowledge Base integration.
+- Context Manager combines Memory and retrieved knowledge.
+- Memory remains process-oriented; Knowledge Base becomes the source for domain knowledge.
+
+## Testing
+
+Tests should cover:
+
+- Rejection of cross-scenario memory reads.
+- Rejection of ordinary-agent writes to checkpoint-owned files.
+- Checkpoint reconstruction from `CHECKPOINT.md` and task progress.
+- Episode creation without raw source document leakage.
+- Exception candidate creation only after threshold triggers.
+- No suggestion when repeated signal is below threshold.
+- User confirmation creates a draft, not an enabled Skill.
+- Existing Skill modification creates a versioned draft.
+- New Skill proposal stays scenario-local.
+- Distill drafts cannot affect runtime until linting, tests, and approval pass.
+- Context Manager refuses to inject unapproved candidates as instructions.
+- Memory does not override TaskBlackboard, EvaluationResult, Human Gate, or Knowledge Base evidence.
+
+## Success Criteria
+
+The Memory System is successful when PowerBanana can resume long-running scenario tasks, explain task progress, and detect repeated special cases in fixed business workflows without storing industry knowledge or changing Skills automatically.
+
+The agent may ask the user whether a repeated exception should become a Skill or evaluator improvement, but runtime behavior changes only after draft generation, linting, regression checks, and approval.

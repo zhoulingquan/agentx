@@ -217,26 +217,43 @@ Rules:
 
 For user-friendly setup, the Evaluation Assistant may ask: "What would prove this task is actually finished?" The answer becomes a draft stop condition in `EVALUATION.md`, then must pass linting and approval before it is used.
 
-## Evaluation Learning Loop
+## Evaluation Exception Learning
 
-Evaluation should improve from real usage without allowing automatic policy drift. The system can use scenario-local maintenance passes:
+Evaluation should improve from repeated special cases in fixed business workflows without allowing automatic policy drift. The system can use scenario-local maintenance passes, but they produce questions and drafts rather than enabled rules.
 
 `ScenarioDream`:
 
-- Summarizes durable evaluation lessons from recent task evaluations, Human Gate decisions, and replay snapshots.
-- Writes only to scenario-local memory.
+- Summarizes repeated evaluation failures, Human Gate reasons, fallback paths, and user corrections.
+- Writes only process memory and exception candidates.
+- Does not store industry knowledge.
 - Does not create enabled rules.
 
 `ScenarioDistill`:
 
-- Finds repeated evaluation failures, common human review reasons, missing golden cases, and recurring calibration gaps.
-- Generates draft additions to `EVALUATION.md`, golden cases, calibration cases, or evaluator candidates.
+- Detects repeated special cases that may require Skill or evaluation changes.
+- Asks the user whether the case should become a Skill update, new local Skill, Human Gate rule, evaluator change, golden case, or calibration case.
+- Generates draft additions only after the user confirms the intended handling.
 - Requires repeated evidence and a clear expected behavior before creating a draft.
 
-Distilled evaluation changes follow the same rule update lifecycle:
+Suggested trigger policy:
+
+```yaml
+exception_learning_policy:
+  min_occurrences: 3
+  time_window_days: 30
+  min_impact_level: medium
+  require_human_confirmation_signal: true
+  require_evaluation_signal: true
+  auto_create_skill: false
+  auto_modify_skill: false
+```
+
+Exception-driven evaluation changes follow this lifecycle:
 
 ```text
-evaluation pattern detected
+repeated evaluation or Human Gate pattern detected
+-> ask user whether PowerBanana should handle it
+-> user selects Skill update, new Skill, Human Gate rule, evaluator change, golden case, calibration case, or ignore
 -> create draft change under scenario directory
 -> show human-readable explanation and diff
 -> run Evaluation Policy lint
@@ -246,7 +263,7 @@ evaluation pattern detected
 -> activate new version or discard draft
 ```
 
-This keeps the evaluation layer user-friendly while preserving deterministic activation.
+This keeps the evaluation layer user-friendly while ensuring repeated exceptions become governed drafts instead of silent runtime behavior changes.
 
 ## Human-Friendly Reports
 
