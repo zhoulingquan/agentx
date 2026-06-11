@@ -318,6 +318,111 @@ Skill-declared constraints:
 
 This split keeps the platform open to new scenarios while preserving safety boundaries.
 
+## Multi-Industry Fit Assessment
+
+This architecture is a reasonable foundation for a multi-industry business-agent platform because it separates stable governance from scenario-specific behavior.
+
+The reusable platform layer is:
+
+- Scenario routing.
+- Deterministic scheduling.
+- Plan and Skill policy validation.
+- ToolGateway mediation.
+- TaskBlackboard state, evidence, and audit records.
+- Evaluation aggregation.
+- Human Gate handling.
+- Report assembly from evaluated artifacts.
+
+The industry-specific layer is:
+
+- Scenario Pack.
+- Domain vocabulary and routing rules.
+- Domain Skills.
+- Domain tool bindings.
+- Domain evaluators.
+- Domain Human Gate policy.
+- Golden cases and calibration cases.
+
+This separation lets the same runtime support sales analysis, contract review, finance review, customer-service triage, compliance checks, and internal knowledge workflows without rewriting the scheduler or governance core.
+
+## Suitable Scenario Types
+
+The architecture is best suited to scenarios where the work can be represented as a governed DAG of evidence-producing steps.
+
+Good early candidates:
+
+- Sales and operations analysis.
+- CSV, spreadsheet, and report analysis.
+- Contract review and clause-risk extraction.
+- Finance document review and rule checking.
+- Customer-service ticket classification and response drafting.
+- Internal knowledge retrieval followed by structured reporting.
+- Compliance and quality review workflows.
+
+These scenarios share useful traits: inputs can be snapshotted, intermediate artifacts can be written to Blackboard, outputs can be evaluated, and high-risk actions can be routed to Human Gate.
+
+## Less Suitable Initial Scenarios
+
+The architecture should not start with scenarios where the primary value depends on unrestricted autonomy, high-frequency side effects, or hard real-time decisions.
+
+Poor initial candidates:
+
+- Fully autonomous production-system operators.
+- High-frequency trading or real-time fraud blocking.
+- Irreversible write actions without human approval.
+- Open-ended internet agents with broad tool access.
+- High-liability legal, medical, or financial final decisions without expert review.
+- Long chains of cross-system writes where rollback and idempotency are not mature.
+
+These scenarios may become possible later, but only after ToolGateway permissions, Human Gate workflows, replay, compensation, and tenant-level access control are production-grade.
+
+## Key Design Risks
+
+The architecture is sound, but its multi-industry usefulness depends on controlling a few risks.
+
+Scenario Pack complexity:
+
+- Scenario Packs can become too large if routing, workflow, tool policy, evaluator policy, and tests are not schema-validated.
+- Mitigation: define a strict Scenario Pack schema and linter before adding many scenarios.
+
+Skill granularity:
+
+- Skills that are too broad become opaque scenario-specific mini-agents.
+- Skills that are too small create brittle plans and excessive scheduler overhead.
+- Mitigation: define Skills around independently testable business capabilities with clear input and output schemas.
+
+Evaluator coverage:
+
+- Multi-industry agents fail when they can execute but cannot verify domain correctness.
+- Mitigation: every production Skill needs at least schema checks, evidence checks, and one domain-specific evaluator or human review path.
+
+Permission and data isolation:
+
+- Multi-industry use will introduce departments, tenants, data classes, and tool credentials.
+- Mitigation: keep credentials out of Skills, enforce all tool access through ToolGateway, and add tenant and role policy before production multi-tenant deployment.
+
+Parallel fan-in:
+
+- Parallel agents may produce conflicting claims or partially evaluated artifacts.
+- Mitigation: require merge policy, conflict entries, artifact versions, and fan-in evaluators before enabling broad parallelism.
+
+## Production Readiness Requirements
+
+Before treating this as a production multi-industry platform, the following components should exist:
+
+1. Scenario Pack schema and linter.
+2. Skill manifest schema and SkillPolicyValidator.
+3. MainAgent Scheduler with ready-node dispatch, state transitions, retries, timeouts, and Human Gate blocking.
+4. Blackboard persistence with artifact versioning, conflict entries, and replay snapshots.
+5. Evaluation registry with domain-specific evaluator contracts.
+6. Golden and calibration case runners per Scenario Pack.
+7. ToolGateway policy with deny-by-default authorization.
+8. Tenant, role, data-classification, and credential-isolation model.
+9. Observability for scheduler transitions, tool calls, evaluation outcomes, and human gates.
+10. Release and rollback process for Scenario Packs and Skill versions.
+
+For near-term implementation, the first three platform investments should be Scenario Pack schema/linting, Skill manifests with policy validation, and the deterministic MainAgent Scheduler.
+
 ## Migration Plan
 
 PowerBanana should migrate incrementally.
@@ -327,13 +432,15 @@ PowerBanana should migrate incrementally.
 3. Add `SkillPolicyValidator` and run it before Step Plan execution.
 4. Move hardcoded metric requirements into Skill and analysis vocabulary metadata.
 5. Introduce a minimal `sales_channel_analysis` Scenario Pack for the existing path.
-6. Let the Planner select the Scenario Pack and Skill chain, while preserving the current fixed fallback.
-7. Introduce a scheduler state model for `pending`, `ready`, `running`, `succeeded`, `failed`, `skipped`, `blocked`, and `needs_human_gate`.
-8. Replace the linear TaskDagExecutor loop with ready-node scheduling while keeping default concurrency at 1.
-9. Add Scenario Pack `concurrency_policy` and enforce it before dispatch.
-10. Add merge and fan-in validation for aggregate nodes.
-11. Enable parallel execution first for low-risk read-only Skills.
-12. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
+6. Add a Scenario Pack schema and linter before creating additional industry packs.
+7. Let the Planner select the Scenario Pack and Skill chain, while preserving the current fixed fallback.
+8. Introduce a scheduler state model for `pending`, `ready`, `running`, `succeeded`, `failed`, `skipped`, `blocked`, and `needs_human_gate`.
+9. Replace the linear TaskDagExecutor loop with ready-node scheduling while keeping default concurrency at 1.
+10. Add Scenario Pack `concurrency_policy` and enforce it before dispatch.
+11. Add merge and fan-in validation for aggregate nodes.
+12. Enable parallel execution first for low-risk read-only Skills.
+13. Add one non-data-analysis Scenario Pack, such as contract review or ticket triage, to validate cross-industry reuse.
+14. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -342,6 +449,7 @@ This path avoids a large rewrite. The existing fixed workflow becomes the first 
 Tests should cover:
 
 - Skill manifest parsing and validation.
+- Scenario Pack schema and lint validation.
 - Rejection of unknown or disabled Skills.
 - Rejection of Skills that request unauthorized tools.
 - Rejection of missing required evaluators.
@@ -351,6 +459,7 @@ Tests should cover:
 - Scheduler tests for ready-node selection, dependency blocking, retry limits, timeout handling, and Human Gate blocking.
 - Blackboard tests for parallel artifact version conflicts and conflict entry creation.
 - Successful execution of the current metric-analysis flow through the new manifest path.
+- Successful execution of at least one non-data-analysis Scenario Pack through the same runtime interfaces.
 - Golden cases that verify selected Scenario Pack, Skill chain, scheduler trace, evaluation gates, and final answer.
 
 ## Non-Goals
@@ -372,5 +481,7 @@ Those can be added later only through the same ToolGateway, Policy, Evaluation, 
 The design is successful when a new low-risk scenario can be added mostly by introducing a Scenario Pack, Skill manifests, focused handlers, concurrency and merge policies, and tests, without changing the core runtime orchestration loop.
 
 The scheduler should be able to execute a frozen DAG with at least one parallel ready layer, record deterministic node transitions, block unsafe fan-in, and preserve the current single-chain PowerBanana behavior when concurrency limits are set to 1.
+
+The multi-industry abstraction should be considered validated only after at least two meaningfully different Scenario Packs run through the same scheduler, Blackboard, ToolGateway, EvaluationRunner, and Human Gate interfaces without changing the core orchestration loop.
 
 The framework should become more open, but the acceptance rule remains strict: no Skill result becomes trusted merely because a Skill produced it. It becomes trusted only after the framework records, evaluates, and gates it.
