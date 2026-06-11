@@ -68,7 +68,7 @@ The LLM is only a drafting and explanation assistant. It does not decide whether
 
 ## Evaluation Assistant
 
-The Evaluation Assistant should ask targeted questions while a Scenario Pack is being created or revised:
+The Evaluation Assistant should ask targeted questions while a Scenario Pack is being initialized or explicitly revised:
 
 1. What should a good final answer contain?
 2. Which mistakes are unacceptable?
@@ -95,6 +95,36 @@ The assistant must not:
 - Bypass calibration cases.
 - Approve or enable its own draft.
 - Treat natural-language prose as executable policy.
+
+## Initialization And Rule Updates
+
+Evaluation setup should run during Agent initialization, not during every task.
+
+The Evaluation Assistant should run when:
+
+- The Agent starts for the first time and no enabled Scenario Pack exists.
+- A domain owner creates a new Scenario Pack.
+- A user with permission asks to add or modify a quality rule.
+- An imported Scenario Pack has no valid Evaluation Contract in the current environment.
+
+Normal task execution should not regenerate `EVALUATION.md` or the Evaluation Contract. Runtime tasks load the active, enabled Scenario Pack and paired Evaluation Contract, then run deterministic evaluators.
+
+Rule updates are versioned:
+
+```text
+user requests evaluation rule change
+-> assistant asks follow-up questions
+-> create change request
+-> generate new EVALUATION.md draft version
+-> show human-readable diff
+-> run Evaluation Policy lint
+-> compile new Evaluation Contract
+-> run affected golden and calibration cases
+-> request domain-owner or administrator approval
+-> activate new version or keep existing version
+```
+
+Enabled Evaluation Packs are immutable. Running tasks remain pinned to the Evaluation Contract version they started with. New tasks use a changed Evaluation Contract only after linting, calibration, and approval.
 
 ## Evaluation Contract
 
@@ -186,6 +216,7 @@ A Scenario Pack cannot move to `enabled` unless evaluation is complete enough to
 - At least one positive golden case exists.
 - At least one negative or escalation calibration case exists.
 - A domain owner or administrator approves the pack.
+- The active Scenario Pack version and active Evaluation Contract version are pinned for runtime tasks.
 
 See [Skill-Governed Runtime Design](superpowers/specs/2026-06-11-skill-governed-runtime-design.md) for the paired Scenario Pack and Evaluation Contract design.
 

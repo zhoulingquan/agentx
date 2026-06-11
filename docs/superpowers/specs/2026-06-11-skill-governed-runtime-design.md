@@ -350,6 +350,77 @@ evaluation_contract:
 
 No Scenario Pack may move from `draft` to `enabled` without a valid Evaluation Contract.
 
+## Agent Initialization Flow
+
+Scenario and Evaluation Pack generation should run during Agent initialization, not during every task. The runtime should distinguish setup-time configuration from task-time execution.
+
+Initialization should run when:
+
+- The Agent starts for the first time and has no enabled Scenario Pack.
+- An administrator creates a new business scenario.
+- A domain owner explicitly asks to add a new scenario.
+- A deployment imports a Scenario Pack that has not been linted or approved in this environment.
+
+Initialization flow:
+
+```text
+agent starts
+-> load enabled Scenario Packs
+-> if none exist, start Scenario Builder
+-> collect scenario requirements through guided questions
+-> collect evaluation requirements through guided questions
+-> generate SCENARIO.md draft
+-> generate EVALUATION.md draft
+-> lint Scenario Pack
+-> lint Evaluation Pack
+-> compile Evaluation Contract
+-> generate golden and calibration drafts
+-> request domain-owner or administrator approval
+-> enable approved pack and pin active version
+```
+
+After initialization, normal user tasks do not regenerate Scenario Packs or Evaluation Contracts. They load the active, enabled versions and run through routing, planning, validation, scheduling, Blackboard, EvaluationRunner, and Human Gate.
+
+## Rule Maintenance Flow
+
+Users should be able to add or modify rules after initialization, but changes must be versioned and governed. An enabled Scenario Pack should not be edited in place.
+
+Rule changes should start from user-friendly requests such as:
+
+- Add a new high-risk condition.
+- Change a threshold.
+- Require an extra evidence field.
+- Add a new output section.
+- Add a new human review trigger.
+- Add a new golden or calibration example.
+
+Rule maintenance flow:
+
+```text
+user requests rule change
+-> builder asks follow-up questions
+-> create change request
+-> generate new draft version of SCENARIO.md and/or EVALUATION.md
+-> show human-readable diff
+-> run Scenario Pack lint
+-> run Evaluation Policy lint
+-> compile new Evaluation Contract
+-> run affected golden and calibration cases
+-> request approval
+-> activate new version or keep existing version
+```
+
+Versioning rules:
+
+- Enabled packs are immutable.
+- Rule changes create a new draft version, such as `contract_payment_review@0.2.0`.
+- Running tasks stay pinned to the Scenario Pack and Evaluation Contract version they started with.
+- New tasks use the newly active version only after approval.
+- Rollback switches the active pointer back to a previous approved version.
+- Every rule change writes an audit record with the requester, reviewer, diff, test results, and activation time.
+
+The LLM may help collect the change, explain the diff, and suggest affected tests. It must not directly activate the change or bypass linting, calibration, approval, or version pinning.
+
 ## User-Friendly Evaluation Builder
 
 Non-technical users should not write evaluator code or gate rules directly. A Scenario Pack Builder can use an LLM conversation to collect evaluation requirements and generate an Evaluation Pack draft.
@@ -599,8 +670,10 @@ PowerBanana should migrate incrementally.
 13. Add merge and fan-in validation for aggregate nodes.
 14. Enable parallel execution first for low-risk read-only Skills.
 15. Add one non-data-analysis Scenario Pack, such as contract review or ticket triage, to validate cross-industry reuse.
-16. Add one user-friendly builder path that collects both scenario requirements and evaluation requirements through guided questions.
-17. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
+16. Add first-run Agent initialization that launches the Scenario and Evaluation builders when no enabled Scenario Pack exists.
+17. Add rule maintenance change requests that create new draft pack versions instead of editing enabled packs in place.
+18. Add one user-friendly builder path that collects both scenario requirements and evaluation requirements through guided questions.
+19. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -625,6 +698,10 @@ Tests should cover:
 - Successful execution of the current metric-analysis flow through the new manifest path.
 - Successful execution of at least one non-data-analysis Scenario Pack through the same runtime interfaces.
 - Builder tests that turn user-friendly quality criteria into draft evaluation rules without enabling them automatically.
+- First-run initialization tests for the no-enabled-pack state.
+- Runtime tests that skip builders and load only active enabled versions.
+- Rule maintenance tests that create new draft versions, show diffs, rerun affected golden and calibration cases, and require approval before activation.
+- Version pinning tests proving running tasks keep their original Scenario Pack and Evaluation Contract versions.
 - Golden cases that verify selected Scenario Pack, Skill chain, scheduler trace, evaluation gates, and final answer.
 
 ## Non-Goals
@@ -650,5 +727,7 @@ The scheduler should be able to execute a frozen DAG with at least one parallel 
 The multi-industry abstraction should be considered validated only after at least two meaningfully different Scenario Packs run through the same scheduler, Blackboard, ToolGateway, EvaluationRunner, and Human Gate interfaces without changing the core orchestration loop.
 
 Every enabled Scenario Pack must have a paired Evaluation Contract that covers baseline checks, Skill outputs, scenario rules, fan-in behavior, report quality, golden cases, and calibration cases. A Scenario Pack without this pairing remains `draft` or `scenario_lint_passed`, never `enabled`.
+
+Scenario and Evaluation builders should run during initialization or explicit rule-maintenance flows only. Normal task execution should use pinned, enabled Scenario Pack and Evaluation Contract versions without regenerating configuration.
 
 The framework should become more open, but the acceptance rule remains strict: no Skill result becomes trusted merely because a Skill produced it. It becomes trusted only after the framework records, evaluates, and gates it.
