@@ -208,6 +208,7 @@ The plain-language explanation may be generated with LLM assistance, but it must
 A Scenario Pack cannot move to `enabled` unless evaluation is complete enough to protect the workflow:
 
 - `EVALUATION.md` exists.
+- `EVALUATION.md` lives in the same scenario directory as `SCENARIO.md`.
 - Evaluation Policy linting passes.
 - Baseline evaluators are present.
 - Every Skill output has an evaluator or explicit human review path.
@@ -217,6 +218,7 @@ A Scenario Pack cannot move to `enabled` unless evaluation is complete enough to
 - At least one negative or escalation calibration case exists.
 - A domain owner or administrator approves the pack.
 - The active Scenario Pack version and active Evaluation Contract version are pinned for runtime tasks.
+- Runtime tasks resolve evaluation files only through the pinned scenario directory.
 
 See [Skill-Governed Runtime Design](superpowers/specs/2026-06-11-skill-governed-runtime-design.md) for the paired Scenario Pack and Evaluation Contract design.
 

@@ -270,6 +270,81 @@ evaluation_policy:
     - context_security_evaluator
 ```
 
+## Scenario File Isolation
+
+Every scenario should be isolated at the filesystem level. A scenario owns its own configuration, generated drafts, plans, DAG templates, policies, tests, and compiled contracts inside one scenario directory.
+
+Recommended shape:
+
+```text
+scenario_packs/
+  sales_channel_analysis/
+    SCENARIO.md
+    EVALUATION.md
+    README.md
+    planner/
+      routing_terms.csv
+      planner_rules.yaml
+    plans/
+      task_plan_template.yaml
+      workflow_dag.yaml
+    policies/
+      tool_policy.yaml
+      context_policy.yaml
+      concurrency_policy.yaml
+      merge_policy.yaml
+      human_gate_policy.yaml
+    contracts/
+      evaluation_contract.yaml
+    golden_cases/
+      conversion_rate_basic.json
+    calibration_cases/
+      metric_mismatch_should_block.json
+    drafts/
+      2026-06-11-initial/
+        SCENARIO.md
+        EVALUATION.md
+        notes.md
+    changes/
+      change_0001/
+        request.md
+        diff.md
+        validation_result.json
+```
+
+Another scenario must have a separate directory:
+
+```text
+scenario_packs/
+  contract_payment_review/
+    SCENARIO.md
+    EVALUATION.md
+    planner/
+    plans/
+    policies/
+    contracts/
+    golden_cases/
+    calibration_cases/
+    drafts/
+    changes/
+```
+
+The runtime must treat the scenario directory as the configuration boundary. Data-analysis files, contract-review files, finance-review files, and ticket-triage files should not be mixed in shared folders except for explicitly shared registries such as global Skill definitions or baseline evaluators.
+
+Rules:
+
+- Each scenario directory has exactly one active `SCENARIO.md` and one active `EVALUATION.md`.
+- Generated plans and DAG templates live under the same scenario directory.
+- Scenario-specific policies live under the same scenario directory.
+- Golden and calibration cases are scenario-local.
+- Drafts and change requests are scenario-local.
+- Compiled Evaluation Contracts are scenario-local and versioned.
+- Shared Skills and shared baseline evaluators may live outside scenario directories, but the Scenario Pack must reference exact versions.
+- A runtime task resolves files only through its pinned `scenario_id` and `scenario_version`.
+- Cross-scenario file references are denied unless the target is from an approved shared registry.
+
+This prevents the data-analysis runtime from accidentally loading contract-review DAGs, evaluators, policies, or examples, and vice versa.
+
 ## Scenario And Evaluation Pack Pairing
 
 A Scenario Pack must be paired with an Evaluation Pack before it can be enabled. The Scenario Pack defines how the business workflow may run. The Evaluation Pack defines how the workflow is judged as correct, safe, partial, blocked, or requiring human review.
@@ -369,12 +444,14 @@ agent starts
 -> if none exist, start Scenario Builder
 -> collect scenario requirements through guided questions
 -> collect evaluation requirements through guided questions
--> generate SCENARIO.md draft
--> generate EVALUATION.md draft
+-> create scenario directory under scenario_packs/<scenario_id>/
+-> generate SCENARIO.md draft inside that scenario directory
+-> generate EVALUATION.md draft inside that scenario directory
 -> lint Scenario Pack
 -> lint Evaluation Pack
 -> compile Evaluation Contract
--> generate golden and calibration drafts
+-> write Evaluation Contract under that scenario directory
+-> generate golden and calibration drafts under that scenario directory
 -> request domain-owner or administrator approval
 -> enable approved pack and pin active version
 ```
@@ -400,7 +477,8 @@ Rule maintenance flow:
 user requests rule change
 -> builder asks follow-up questions
 -> create change request
--> generate new draft version of SCENARIO.md and/or EVALUATION.md
+-> create change folder under the scenario directory
+-> generate new draft version of SCENARIO.md and/or EVALUATION.md in that change folder
 -> show human-readable diff
 -> run Scenario Pack lint
 -> run Evaluation Policy lint
@@ -499,17 +577,19 @@ The Planner may choose Skills, but it only creates candidates. Before execution,
 
 1. The selected Scenario Pack exists and is enabled.
 2. The selected Scenario Pack has a valid paired Evaluation Contract.
-3. Every Skill exists, is versioned, and is allowed by the Scenario Pack.
-4. Each Skill input can be satisfied by prior outputs, user input, or allowed ToolGateway results.
-5. Tool permissions match the Skill manifest and scenario policy.
-6. Context references are limited to authorized Blackboard, Memory, and dataset views.
-7. Required baseline, Skill-level, scenario-level, fan-in, and report evaluators are present and versioned.
-8. Human Gate requirements are attached for risky operations.
-9. DAG and Step Plan topology is acyclic and bounded.
-10. Autonomy Policy allows the proposed number of steps, alternatives, retries, and parallelism.
-11. Concurrency Policy allows every parallel-ready layer.
-12. Merge Policy covers any fan-in node or shared logical artifact.
-13. Golden and calibration case requirements are satisfied for enabled scenarios.
+3. All scenario-local files resolve under the selected scenario directory.
+4. Cross-scenario file references are rejected unless they point to an approved shared registry.
+5. Every Skill exists, is versioned, and is allowed by the Scenario Pack.
+6. Each Skill input can be satisfied by prior outputs, user input, or allowed ToolGateway results.
+7. Tool permissions match the Skill manifest and scenario policy.
+8. Context references are limited to authorized Blackboard, Memory, and dataset views.
+9. Required baseline, Skill-level, scenario-level, fan-in, and report evaluators are present and versioned.
+10. Human Gate requirements are attached for risky operations.
+11. DAG and Step Plan topology is acyclic and bounded.
+12. Autonomy Policy allows the proposed number of steps, alternatives, retries, and parallelism.
+13. Concurrency Policy allows every parallel-ready layer.
+14. Merge Policy covers any fan-in node or shared logical artifact.
+15. Golden and calibration case requirements are satisfied for enabled scenarios.
 
 Only a passing candidate becomes a frozen executable plan.
 
@@ -525,6 +605,7 @@ Framework hard constraints:
 - All outputs that matter are written to TaskBlackboard.
 - Final answers require EvaluationRunner aggregation.
 - Enabled scenarios require a valid paired Evaluation Contract.
+- Scenario-local files must resolve under the pinned scenario directory.
 - Writes and high-risk actions require Human Gate.
 - Raw user content remains untrusted unless transformed by verified tools.
 - Parallel nodes cannot read each other's private state or direct messages.
@@ -673,7 +754,8 @@ PowerBanana should migrate incrementally.
 16. Add first-run Agent initialization that launches the Scenario and Evaluation builders when no enabled Scenario Pack exists.
 17. Add rule maintenance change requests that create new draft pack versions instead of editing enabled packs in place.
 18. Add one user-friendly builder path that collects both scenario requirements and evaluation requirements through guided questions.
-19. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
+19. Add scenario directory isolation checks for file resolution and cross-scenario references.
+20. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -686,6 +768,8 @@ Tests should cover:
 - Evaluation Pack schema and lint validation.
 - Evaluation Contract compilation from `SCENARIO.md` and `EVALUATION.md`.
 - Rejection of enabled Scenario Packs without a paired Evaluation Contract.
+- Rejection of scenario-local files outside the pinned scenario directory.
+- Rejection of unapproved cross-scenario references.
 - Rejection of unknown or disabled Skills.
 - Rejection of Skills that request unauthorized tools.
 - Rejection of missing required evaluators.
@@ -702,6 +786,7 @@ Tests should cover:
 - Runtime tests that skip builders and load only active enabled versions.
 - Rule maintenance tests that create new draft versions, show diffs, rerun affected golden and calibration cases, and require approval before activation.
 - Version pinning tests proving running tasks keep their original Scenario Pack and Evaluation Contract versions.
+- Scenario isolation tests proving data-analysis tasks cannot load contract-review plans, policies, evaluators, or test cases.
 - Golden cases that verify selected Scenario Pack, Skill chain, scheduler trace, evaluation gates, and final answer.
 
 ## Non-Goals
@@ -729,5 +814,7 @@ The multi-industry abstraction should be considered validated only after at leas
 Every enabled Scenario Pack must have a paired Evaluation Contract that covers baseline checks, Skill outputs, scenario rules, fan-in behavior, report quality, golden cases, and calibration cases. A Scenario Pack without this pairing remains `draft` or `scenario_lint_passed`, never `enabled`.
 
 Scenario and Evaluation builders should run during initialization or explicit rule-maintenance flows only. Normal task execution should use pinned, enabled Scenario Pack and Evaluation Contract versions without regenerating configuration.
+
+Each scenario must own its generated files under its own scenario directory. Runtime file resolution must use the pinned scenario directory and deny accidental mixing of plans, DAGs, policies, evaluators, golden cases, calibration cases, drafts, or change requests from another scenario.
 
 The framework should become more open, but the acceptance rule remains strict: no Skill result becomes trusted merely because a Skill produced it. It becomes trusted only after the framework records, evaluates, and gates it.
