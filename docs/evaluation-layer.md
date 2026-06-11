@@ -2,7 +2,7 @@
 
 PowerBanana uses a deterministic, extensible Evaluation Layer. Evaluators inspect structured context and return an `EvaluatorOutcome`; the `EvaluationRunner` aggregates all outcomes into one `EvaluationResult`.
 
-The layer now evaluates four targets:
+The layer now evaluates five targets:
 
 | Target | Entry Point | Report Field |
 |---|---|---|
@@ -10,6 +10,7 @@ The layer now evaluates four targets:
 | Planner routing gate | `EvaluationRunner.evaluate_gate` | `evaluation` |
 | Vocabulary suggestion gate | `EvaluationRunner.evaluate_gate` | `evaluation` |
 | Analysis result | `EvaluationRunner.evaluate_analysis` | `evaluation` |
+| Task stop condition | `EvaluationRunner.evaluate_goal` | `goal_evaluation` |
 
 ## Default Evaluators
 
@@ -22,6 +23,7 @@ The layer now evaluates four targets:
 | `evidence_coverage_evaluator` | Checks evidence refs and step trace coverage | `block` |
 | `metric_recompute_evaluator` | Recomputes requested metric values from rows | `block` |
 | `context_security_evaluator` | Checks prompt-injection findings were handled as data | `human_review` |
+| `goal_judge_evaluator` | Independently checks whether the task stop condition is satisfied | `block` or `human_review` |
 
 ## Planner Evaluation
 
@@ -172,8 +174,79 @@ Evaluation should run in layers:
 | Scenario | Domain-specific business rules and thresholds | Yes, through builder and approval |
 | Fan-in | Checks whether parallel outputs can be merged safely | Yes, through merge policy |
 | Report | Checks final answer completeness, support, and safety | Yes, with baseline checks required |
+| Goal Judge | Checks task-level completion against transcript, scheduler trace, artifacts, and evaluator outcomes | Limited to stop-condition phrasing |
 
 The scheduler uses the strongest resulting gate action when deciding whether to continue, retry, ask for clarification, route to human review, return a partial result, or block.
+
+## Goal Judge Evaluator
+
+`GoalJudgeEvaluator` is an independent task-level evaluator. It prevents the working agent from stopping merely because it believes the task is done.
+
+Inputs:
+
+- User goal or task stop condition.
+- Selected `scenario_id`, Scenario Pack version, and Evaluation Contract version.
+- Scheduler trace and Task DAG status.
+- TaskBlackboard artifact refs and artifact versions.
+- Prior EvaluationResults from Skill, Scenario, Fan-in, and Report layers.
+- Human Gate state.
+
+Output:
+
+```json
+{
+  "evaluator_id": "goal_judge_evaluator",
+  "version": "0.1.0",
+  "passed": false,
+  "gate_action": "block",
+  "failure_reasons": ["missing_evaluated_artifact"],
+  "blocking_issues": ["payment risk artifact has not passed evaluation"],
+  "scores": {
+    "goal_satisfied": 0.0
+  }
+}
+```
+
+Rules:
+
+- A passing Goal Judge cannot override a blocking deterministic evaluator.
+- A failing Goal Judge can force continuation, clarification, human review, or block.
+- If the judge is unavailable, low-risk scenarios may fail open only when the Scenario Pack declares that policy. High-risk scenarios fail to `human_review`.
+- The judge must cite structured evidence from artifacts or EvaluationResults, not only the final report text.
+- The judge has a bounded re-entry count so autonomous work cannot loop forever.
+
+For user-friendly setup, the Evaluation Assistant may ask: "What would prove this task is actually finished?" The answer becomes a draft stop condition in `EVALUATION.md`, then must pass linting and approval before it is used.
+
+## Evaluation Learning Loop
+
+Evaluation should improve from real usage without allowing automatic policy drift. The system can use scenario-local maintenance passes:
+
+`ScenarioDream`:
+
+- Summarizes durable evaluation lessons from recent task evaluations, Human Gate decisions, and replay snapshots.
+- Writes only to scenario-local memory.
+- Does not create enabled rules.
+
+`ScenarioDistill`:
+
+- Finds repeated evaluation failures, common human review reasons, missing golden cases, and recurring calibration gaps.
+- Generates draft additions to `EVALUATION.md`, golden cases, calibration cases, or evaluator candidates.
+- Requires repeated evidence and a clear expected behavior before creating a draft.
+
+Distilled evaluation changes follow the same rule update lifecycle:
+
+```text
+evaluation pattern detected
+-> create draft change under scenario directory
+-> show human-readable explanation and diff
+-> run Evaluation Policy lint
+-> compile Evaluation Contract
+-> run affected golden and calibration cases
+-> request domain-owner or administrator approval
+-> activate new version or discard draft
+```
+
+This keeps the evaluation layer user-friendly while preserving deterministic activation.
 
 ## Human-Friendly Reports
 
@@ -215,6 +288,7 @@ A Scenario Pack cannot move to `enabled` unless evaluation is complete enough to
 - Skill-level evaluator bindings match the selected scenario's allowed `global:` and `local:` Skills.
 - Every high-risk rule maps to Human Gate.
 - Fan-in nodes have fan-in evaluator coverage.
+- Task-level stop conditions have Goal Judge coverage or an explicit low-risk bypass policy.
 - At least one positive golden case exists.
 - At least one negative or escalation calibration case exists.
 - A domain owner or administrator approves the pack.

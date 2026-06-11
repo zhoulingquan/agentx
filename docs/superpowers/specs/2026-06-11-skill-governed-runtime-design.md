@@ -51,6 +51,7 @@ Skills must not decide:
 flowchart TD
     U["User Request"] --> R["Scenario Router"]
     R --> SP["Scenario Pack"]
+    SP --> PG["ScenarioPathGuard"]
     SP --> EC["Evaluation Contract"]
     EC --> P["Planner"]
     P --> CP["Candidate Plan / Workflow / StepPlan"]
@@ -59,14 +60,17 @@ flowchart TD
     PV --> SCH["MainAgent Scheduler"]
     SCH --> EX["Executor"]
     EX --> SK["Skill Runtime / Sub-agent Runtime"]
+    SCH --> CW["ScenarioCheckpointWriter"]
+    CW --> SM["Scenario Memory / Checkpoint"]
     SK --> TG["ToolGateway"]
     SK --> BB["TaskBlackboard"]
     BB --> EV["EvaluationRunner"]
+    EV --> GJ["GoalJudgeEvaluator"]
     EV --> HG["Human Gate"]
     EV --> RP["Report"]
 ```
 
-The framework owns routing, validation, execution, blackboard writes, tool mediation, evaluation aggregation, human gates, and final reporting. Scenario Packs and Skills provide declarative capabilities and constraints.
+The framework owns routing, path guarding, validation, execution, checkpointing, blackboard writes, tool mediation, evaluation aggregation, goal judgment, human gates, and final reporting. Scenario Packs and Skills provide declarative capabilities and constraints.
 
 ## Main Agent Scheduler
 
@@ -80,7 +84,9 @@ Scheduler responsibilities:
 - Enforce Scenario Pack concurrency limits.
 - Track running work, retries, timeouts, skips, and failures.
 - Write dispatch decisions and node transitions to TaskBlackboard.
+- Notify ScenarioCheckpointWriter of task state, fan-in state, and long-running progress.
 - Trigger EvaluationRunner after node or fan-in completion.
+- Require GoalJudgeEvaluator before declaring an autonomous task complete.
 - Route blocked or risky nodes to Human Gate.
 - Hand only evaluated artifacts to report generation.
 
@@ -91,6 +97,7 @@ The scheduler must not:
 - Let sub-agents call each other directly.
 - Let a node read unevaluated upstream artifacts unless the Scenario Pack explicitly allows candidate-only reads.
 - Treat Skill output as trusted before Blackboard recording and evaluation.
+- Write directly to scenario checkpoint, durable memory, or enabled scenario files.
 
 This makes the Main Agent powerful enough to coordinate many agents while keeping it predictable and auditable.
 
@@ -345,6 +352,7 @@ scenario_packs/
     SCENARIO.md
     EVALUATION.md
     README.md
+    CHECKPOINT.md
     planner/
       routing_terms.csv
       planner_rules.yaml
@@ -368,6 +376,12 @@ scenario_packs/
       conversion_rate_basic.json
     calibration_cases/
       metric_mismatch_should_block.json
+    memory/
+      MEMORY.md
+      notes.md
+      tasks/
+        T1/
+          progress.md
     drafts/
       2026-06-11-initial/
         SCENARIO.md
@@ -409,11 +423,109 @@ Rules:
 - Drafts and change requests are scenario-local.
 - Compiled Evaluation Contracts are scenario-local and versioned.
 - Scenario-local Skills live under the scenario directory and cannot be referenced by other scenarios.
+- Scenario memory, checkpoints, task progress, notes, and rule-change logs are scenario-local.
 - Shared Skills and shared baseline evaluators may live outside scenario directories, but the Scenario Pack must reference exact versions from approved registries.
 - A runtime task resolves files only through its pinned `scenario_id` and `scenario_version`.
 - Cross-scenario file references are denied unless the target is from an approved shared registry.
 
 This prevents the data-analysis runtime from accidentally loading contract-review DAGs, evaluators, policies, or examples, and vice versa.
+
+## Scenario Runtime State And Path Guard
+
+The runtime should add a scenario-scoped state layer inspired by long-horizon coding agents that keep structured checkpoints and memory across sessions. The important lesson is not the coding-agent behavior itself; it is the separation between working state, durable memory, and write permissions.
+
+Each active task should be bound to:
+
+- `scenario_id`.
+- `scenario_version`.
+- `evaluation_contract_version`.
+- `scenario_root`.
+- `task_id`.
+- `allowed_global_registries`.
+
+All scenario file reads and writes must pass through a `ScenarioPathGuard`. The guard rejects:
+
+- Paths outside the pinned `scenario_root`.
+- Another scenario's `SCENARIO.md`, `EVALUATION.md`, plans, DAGs, policies, Skills, examples, memory, checkpoints, or change requests.
+- Scenario-local Skill references that are not under the pinned scenario directory.
+- Writes to enabled Scenario Pack files outside an approved draft or change request flow.
+- Direct writes by general agents to checkpoint-writer-owned files.
+
+The guard allows:
+
+- Reads from the pinned scenario directory.
+- Reads from approved global Skill and baseline evaluator registries by exact version.
+- Writes to task-local artifacts through TaskBlackboard.
+- Writes to draft and change folders during initialization or rule maintenance.
+- Writes to scenario checkpoint and memory files only by the dedicated writer role.
+
+This guard is a framework hard constraint. A Skill manifest, Planner output, or Scenario Pack cannot weaken it.
+
+## Scenario Checkpoint Writer
+
+Long-running multi-agent workflows need a dedicated writer that maintains scenario state without letting the main agent rewrite history opportunistically. AgentX should introduce a hidden `ScenarioCheckpointWriter` sub-agent per running scenario task.
+
+The writer owns these files under the selected scenario directory:
+
+```text
+scenario_packs/<scenario_id>/
+  CHECKPOINT.md
+  memory/
+    MEMORY.md
+    notes.md
+    tasks/<task_id>/progress.md
+  changes/<change_id>/validation_result.json
+```
+
+Responsibilities:
+
+- Maintain the current task intent, active Scenario Pack version, Evaluation Contract version, and next concrete action.
+- Record scheduler node states, running sub-agents, pending Human Gates, and blocked dependencies.
+- Reconcile sub-agent progress into scenario task progress.
+- Promote only durable, verified scenario knowledge into scenario `MEMORY.md`.
+- Keep exact-form values such as thresholds, rule IDs, evaluator IDs, dataset versions, and file paths byte-for-byte when they are needed for replay.
+- Keep checkpoint sections bounded so context reconstruction can inject high-signal state instead of raw history.
+
+Restrictions:
+
+- The main agent and ordinary sub-agents may append task artifacts through TaskBlackboard but cannot directly write writer-owned checkpoint files.
+- The writer cannot modify source scenario files that are currently enabled.
+- The writer cannot create or enable new Skills, rules, evaluators, or golden cases.
+- The writer can summarize a possible rule or Skill candidate, but activation still goes through rule maintenance.
+
+This turns checkpointing into a governed runtime service instead of an informal memory habit.
+
+## Scenario Dream And Distill
+
+The framework should support controlled self-improvement, but only as draft generation. Two maintenance passes can be added:
+
+`ScenarioDream`:
+
+- Reads recent scenario checkpoints, task progress, evaluation reports, Human Gate decisions, and replay snapshots.
+- Consolidates durable scenario knowledge into `memory/MEMORY.md`.
+- Removes stale or contradicted scenario notes.
+- Flags repeated failures, recurring ambiguity, and missing domain vocabulary.
+
+`ScenarioDistill`:
+
+- Looks for repeated manual workflows, repeated correction patterns, recurring evaluator failures, and common human review reasons.
+- Produces candidate local Skills, evaluator rules, golden cases, calibration cases, or promotion candidates for global Skills.
+- Creates drafts under `drafts/` or `changes/`, never enabled artifacts.
+- Requires evidence from at least two tasks, a stable input/output shape, and a clear stopping condition before proposing a reusable asset.
+
+Distillation output must enter the same lifecycle as user-requested changes:
+
+```text
+candidate discovered
+-> create draft under scenario directory
+-> lint Scenario Pack and Evaluation Pack
+-> compile Evaluation Contract
+-> run affected golden and calibration cases
+-> request approval
+-> activate or discard
+```
+
+This lets the agent learn from repeated work while preserving scenario isolation, auditability, and human approval.
 
 ## Scenario And Evaluation Pack Pairing
 
@@ -517,6 +629,7 @@ agent starts
 -> create scenario directory under scenario_packs/<scenario_id>/
 -> generate SCENARIO.md draft inside that scenario directory
 -> generate EVALUATION.md draft inside that scenario directory
+-> initialize scenario CHECKPOINT.md and memory/ templates
 -> lint Scenario Pack
 -> lint Evaluation Pack
 -> compile Evaluation Contract
@@ -527,6 +640,8 @@ agent starts
 ```
 
 After initialization, normal user tasks do not regenerate Scenario Packs or Evaluation Contracts. They load the active, enabled versions and run through routing, planning, validation, scheduling, Blackboard, EvaluationRunner, and Human Gate.
+
+Initialization may run `ScenarioDream` only to import verified durable knowledge from a known prior scenario source. It must not run `ScenarioDistill` to auto-create enabled Skills or rules during first setup. Distillation can create drafts only after the scenario has enough real task history.
 
 ## Rule Maintenance Flow
 
@@ -558,6 +673,8 @@ user requests rule change
 -> activate new version or keep existing version
 ```
 
+The same flow applies when `ScenarioDistill` proposes a candidate rule, Skill, evaluator, golden case, or calibration case. Distilled candidates are treated as suggestions from historical evidence, not as trusted runtime policy.
+
 Versioning rules:
 
 - Enabled packs are immutable.
@@ -568,6 +685,54 @@ Versioning rules:
 - Every rule change writes an audit record with the requester, reviewer, diff, test results, and activation time.
 
 The LLM may help collect the change, explain the diff, and suggest affected tests. It must not directly activate the change or bypass linting, calibration, approval, or version pinning.
+
+## Runtime Task Flow
+
+Once a Scenario Pack is enabled, normal task execution should follow this governed loop:
+
+```text
+user request
+-> Scenario Router selects enabled scenario
+-> bind scenario_id, scenario_version, evaluation_contract_version
+-> ScenarioPathGuard opens pinned scenario root
+-> Planner creates candidate plan or DAG
+-> SkillPolicyValidator and PlanValidator freeze executable plan
+-> MainAgent Scheduler dispatches ready nodes
+-> sub-agents execute Skills through ToolGateway
+-> Skill outputs write artifacts to TaskBlackboard
+-> ScenarioCheckpointWriter records progress and state
+-> EvaluationRunner evaluates node outputs and fan-in
+-> GoalJudgeEvaluator checks task-level stop condition
+-> Human Gate handles blocking or high-risk outcomes
+-> Report is assembled from evaluated artifacts only
+```
+
+The runtime does not regenerate `SCENARIO.md`, `EVALUATION.md`, Skill manifests, or Evaluation Contracts during this flow. It may append runtime state and artifacts under writer-owned memory, TaskBlackboard, run snapshots, or explicitly approved task output folders.
+
+## Goal Judge
+
+The system should add an independent `GoalJudgeEvaluator` to prevent the main agent from declaring work complete without evidence. The judge reads the task transcript, scheduler trace, TaskBlackboard artifacts, and EvaluationResults, then returns a structured verdict:
+
+```yaml
+goal_judge:
+  ok: false
+  impossible: false
+  reason: "The report has no evaluated payment-risk artifact."
+  missing:
+    - artifact: blackboard://task_001/artifacts/payment_risk_v1
+    - evaluation: contract_payment_rule_evaluator@0.1.0
+```
+
+Rules:
+
+- The judge is independent of the working sub-agent that produced the result.
+- The judge can require continuation, clarification, human review, or blocking.
+- The judge cannot weaken a blocking EvaluationResult.
+- The judge cannot mark a scenario enabled.
+- The judge fails open only for low-risk convenience tasks; high-risk scenarios should fail to human review if the judge is unavailable.
+- A maximum re-entry count prevents infinite autonomous loops.
+
+This is a task-level stop-condition gate. It complements deterministic evaluators rather than replacing them.
 
 ## User-Friendly Evaluation Builder
 
@@ -647,22 +812,25 @@ The Planner may choose Skills, but it only creates candidates. Before execution,
 
 1. The selected Scenario Pack exists and is enabled.
 2. The selected Scenario Pack has a valid paired Evaluation Contract.
-3. All scenario-local files resolve under the selected scenario directory.
-4. Cross-scenario file references are rejected unless they point to an approved shared registry.
-5. Global Skill references resolve only from the approved global Skill registry.
-6. Local Skill references resolve only under the selected scenario directory.
-7. Cross-scenario local Skill references are rejected.
-8. Every Skill exists, is versioned, and is allowed by the Scenario Pack.
-9. Each Skill input can be satisfied by prior outputs, user input, or allowed ToolGateway results.
-10. Tool permissions match the Skill manifest and scenario policy.
-11. Context references are limited to authorized Blackboard, Memory, and dataset views.
-12. Required baseline, Skill-level, scenario-level, fan-in, and report evaluators are present and versioned.
-13. Human Gate requirements are attached for risky operations.
-14. DAG and Step Plan topology is acyclic and bounded.
-15. Autonomy Policy allows the proposed number of steps, alternatives, retries, and parallelism.
-16. Concurrency Policy allows every parallel-ready layer.
-17. Merge Policy covers any fan-in node or shared logical artifact.
-18. Golden and calibration case requirements are satisfied for enabled scenarios.
+3. The task is bound to a pinned `scenario_id`, `scenario_version`, `evaluation_contract_version`, and `scenario_root`.
+4. ScenarioPathGuard is active for all scenario file reads and writes.
+5. All scenario-local files resolve under the selected scenario directory.
+6. Cross-scenario file references are rejected unless they point to an approved shared registry.
+7. Global Skill references resolve only from the approved global Skill registry.
+8. Local Skill references resolve only under the selected scenario directory.
+9. Cross-scenario local Skill references are rejected.
+10. Every Skill exists, is versioned, and is allowed by the Scenario Pack.
+11. Each Skill input can be satisfied by prior outputs, user input, or allowed ToolGateway results.
+12. Tool permissions match the Skill manifest and scenario policy.
+13. Context references are limited to authorized Blackboard, scenario Memory, and dataset views.
+14. Required baseline, Skill-level, scenario-level, fan-in, report, and goal-judge evaluators are present and versioned.
+15. Human Gate requirements are attached for risky operations.
+16. DAG and Step Plan topology is acyclic and bounded.
+17. Autonomy Policy allows the proposed number of steps, alternatives, retries, and parallelism.
+18. Concurrency Policy allows every parallel-ready layer.
+19. Merge Policy covers any fan-in node or shared logical artifact.
+20. ScenarioCheckpointWriter permissions are available for long-running or autonomous tasks.
+21. Golden and calibration case requirements are satisfied for enabled scenarios.
 
 Only a passing candidate becomes a frozen executable plan.
 
@@ -677,14 +845,19 @@ Framework hard constraints:
 - All Skill calls are scheduled by the MainAgent Scheduler and Executor.
 - All outputs that matter are written to TaskBlackboard.
 - Final answers require EvaluationRunner aggregation.
+- Autonomous task completion requires GoalJudgeEvaluator or an explicit low-risk bypass policy.
 - Enabled scenarios require a valid paired Evaluation Contract.
+- Scenario file access goes through ScenarioPathGuard.
 - Scenario-local files must resolve under the pinned scenario directory.
 - Scenario-local Skills must resolve under the pinned scenario directory.
+- Scenario checkpoints, memory, notes, and task progress are scenario-local.
+- Checkpoint-writer-owned files are writable only by ScenarioCheckpointWriter.
 - Cross-scenario local Skill reuse is denied by default.
 - Writes and high-risk actions require Human Gate.
 - Raw user content remains untrusted unless transformed by verified tools.
 - Parallel nodes cannot read each other's private state or direct messages.
 - Fan-in nodes can read only authorized Blackboard refs and evaluation results.
+- ScenarioDream and ScenarioDistill can create draft candidates only; they cannot enable runtime policy.
 
 Skill-declared constraints:
 
@@ -790,6 +963,16 @@ Parallel fan-in:
 - Parallel agents may produce conflicting claims or partially evaluated artifacts.
 - Mitigation: require merge policy, conflict entries, artifact versions, and fan-in evaluators before enabling broad parallelism.
 
+Self-improvement drift:
+
+- Memory consolidation and workflow distillation may overfit to recent tasks or promote accidental behavior into policy.
+- Mitigation: keep ScenarioDream and ScenarioDistill read-only over raw history, draft-only for generated assets, and subject to linting, calibration, approval, and version pinning.
+
+Checkpoint authority drift:
+
+- A long-running agent may overwrite or misplace state if every sub-agent can write memory files directly.
+- Mitigation: reserve checkpoint, memory, notes, and task progress ownership to ScenarioCheckpointWriter and enforce write allowlists through ScenarioPathGuard.
+
 ## Production Readiness Requirements
 
 Before treating this as a production multi-industry platform, the following components should exist:
@@ -801,11 +984,15 @@ Before treating this as a production multi-industry platform, the following comp
 5. Evaluation registry with domain-specific evaluator contracts.
 6. Golden and calibration case runners per Scenario Pack.
 7. ToolGateway policy with deny-by-default authorization.
-8. Tenant, role, data-classification, and credential-isolation model.
-9. Observability for scheduler transitions, tool calls, evaluation outcomes, and human gates.
-10. Release and rollback process for Scenario Packs and Skill versions.
+8. ScenarioPathGuard with per-scenario read/write allowlists.
+9. ScenarioCheckpointWriter with checkpoint, memory, notes, and task progress ownership.
+10. GoalJudgeEvaluator for task-level stop conditions.
+11. ScenarioDream and ScenarioDistill maintenance flows with draft-only output.
+12. Tenant, role, data-classification, and credential-isolation model.
+13. Observability for scheduler transitions, tool calls, checkpoint updates, evaluation outcomes, goal-judge verdicts, and human gates.
+14. Release and rollback process for Scenario Packs and Skill versions.
 
-For near-term implementation, the first three platform investments should be Scenario Pack schema/linting, Skill manifests with policy validation, and the deterministic MainAgent Scheduler.
+For near-term implementation, the first platform investments should be Scenario Pack schema/linting, Skill manifests with policy validation, deterministic MainAgent Scheduler, ScenarioPathGuard, and a minimal ScenarioCheckpointWriter.
 
 ## Migration Plan
 
@@ -832,7 +1019,12 @@ PowerBanana should migrate incrementally.
 19. Add scenario directory isolation checks for file resolution and cross-scenario references.
 20. Add global and scenario-local Skill registries with explicit `global:` and `local:` resolution.
 21. Add a promotion path for turning a scenario-local Skill into a reviewed global Skill.
-22. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
+22. Add ScenarioPathGuard for scenario file reads and writes.
+23. Add ScenarioCheckpointWriter with scenario-local checkpoint and memory templates.
+24. Add GoalJudgeEvaluator as a task-level stop-condition gate.
+25. Add ScenarioDream for scenario memory consolidation.
+26. Add ScenarioDistill for draft-only Skill, evaluator, golden case, and calibration case candidates.
+27. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, path-guard decisions, checkpoint updates, goal-judge verdicts, and policy gates.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -849,6 +1041,8 @@ Tests should cover:
 - Rejection of unapproved cross-scenario references.
 - Rejection of `local:` Skill references outside the pinned scenario directory.
 - Rejection of another scenario's local Skill.
+- Rejection of cross-scenario memory, checkpoint, notes, task progress, draft, or change file references.
+- Rejection of direct writes to ScenarioCheckpointWriter-owned files by ordinary agents.
 - Acceptance of approved `global:` Skill references by exact version.
 - Skill promotion tests proving local Skills cannot become global without review, versioning, tests, and approval.
 - Rejection of unknown or disabled Skills.
@@ -859,7 +1053,11 @@ Tests should cover:
 - Rejection of fan-in nodes without an explicit merge policy.
 - Rejection of fan-in nodes without fan-in evaluator coverage.
 - Scheduler tests for ready-node selection, dependency blocking, retry limits, timeout handling, and Human Gate blocking.
+- GoalJudgeEvaluator tests for satisfied, missing-evidence, impossible, judge-unavailable, and max-reentry cases.
 - Blackboard tests for parallel artifact version conflicts and conflict entry creation.
+- ScenarioCheckpointWriter tests for progress reconciliation, exact-form preservation, bounded checkpoint sections, and writer allowlists.
+- ScenarioDream tests for memory consolidation without creating enabled rules.
+- ScenarioDistill tests for draft-only candidates with enough repeated evidence and no auto-activation.
 - Successful execution of the current metric-analysis flow through the new manifest path.
 - Successful execution of at least one non-data-analysis Scenario Pack through the same runtime interfaces.
 - Builder tests that turn user-friendly quality criteria into draft evaluation rules without enabling them automatically.
