@@ -46,6 +46,45 @@ Memory must never override:
 - Human Gate decisions.
 - Future Knowledge Base retrieval results.
 
+## Current Implementation Baseline
+
+The current code has only a minimal working-memory seed:
+
+- `MemoryManager.write_task_summary()` writes one task summary record after report generation.
+- The record lives inside the current `TaskBlackboard.memory_records`.
+- It is not persisted to disk.
+- It is not loaded at the beginning of a later task.
+- It is not bounded, curated, searched, approved, or injected through Context Manager as a frozen memory snapshot.
+
+Therefore the current implementation should be treated as a seed for the future Memory boundary, not as the final small-capacity memory system.
+
+The first design milestone should be a small, scenario-local Process Memory snapshot, not full long-term memory.
+
+## External Lessons Adopted
+
+From MiMo-Code, PowerBanana should adopt:
+
+- Dedicated checkpoint writing instead of ad hoc main-agent memory writes.
+- Task progress files for long-running or resumed work.
+- Path guards that enforce ownership of memory and checkpoint files.
+- Draft-only learning passes that propose reusable assets from repeated work.
+
+From Hermes Agent, PowerBanana should adopt:
+
+- Small, bounded memory that stays high-signal.
+- Session search adapted as structured Episode search.
+- Skills as procedural memory, where repeatable procedures become Skill drafts rather than prose memory.
+- Write approval for memory and Skill changes.
+- Security scanning before memory is injected into prompts.
+
+PowerBanana should not adopt:
+
+- Free-form personal memory as a business decision input.
+- Raw transcript search exposed directly to agents.
+- Agent-managed Skill writes that become active automatically.
+- External memory providers in the first implementation phase.
+- Industry knowledge storage inside Memory.
+
 ## Architecture
 
 ```mermaid
@@ -106,6 +145,122 @@ scenario_packs/
 | Process Memory | Stable workflow preference or process lesson | Medium to long | Context hint only |
 | Exception Candidate | Repeated special case in a fixed workflow | Until accepted/discarded | User confirmation |
 | Distill Candidate | Draft Skill/evaluator/golden/calibration change | Until approved/discarded | Governance workflow only |
+
+## Small-Capacity Process Memory
+
+PowerBanana should start with a small-capacity, scenario-local process memory snapshot. This is the closest equivalent to Hermes-style bounded memory, but it is narrower and enterprise-governed.
+
+File:
+
+```text
+scenario_packs/<scenario_id>/memory/MEMORY.md
+```
+
+Purpose:
+
+- Keep the highest-signal workflow lessons for one scenario.
+- Help the agent continue work consistently.
+- Help the agent ask better exception-learning questions.
+- Avoid repeatedly making the same process mistake.
+
+It must not contain domain knowledge or business facts.
+
+Suggested budget:
+
+```yaml
+process_memory_budget:
+  max_chars: 2400
+  max_items: 12
+  max_item_chars: 240
+  injection_mode: frozen_at_task_start
+  refresh_policy: after_approved_memory_candidate
+```
+
+Suggested `MEMORY.md` sections:
+
+```markdown
+# Scenario Process Memory
+
+## Workflow Hints
+- Keep ranking reports concise and include metric value plus group label.
+
+## Repeated Exceptions
+- Users often clarify ambiguous "best channel" questions by choosing revenue or conversion rate.
+
+## Reporting Preferences
+- Prefer plain business wording over implementation details.
+
+## Suppressed Patterns
+- Do not ask about single-occurrence formatting preferences.
+```
+
+The snapshot is derived from structured records. It is not the source of truth. If the Markdown conflicts with structured records, TaskBlackboard, or EvaluationResults, the structured source wins.
+
+## Structured Memory Records
+
+The runtime should store structured records separately from the human-readable snapshot.
+
+Example:
+
+```json
+{
+  "memory_id": "mem_proc_001",
+  "scenario_id": "sales_channel_analysis",
+  "scope": "scenario",
+  "memory_type": "process_lesson",
+  "allowed_use": "report_format_hint",
+  "content": {
+    "summary": "Reports are clearer when metric ranking includes both value and row count."
+  },
+  "source_refs": ["episode_2026_06_11_001", "eval_result_003"],
+  "confidence": 0.82,
+  "status": "active",
+  "created_at": "2026-06-11T10:00:00+08:00",
+  "last_verified_at": "2026-06-11T10:00:00+08:00",
+  "expires_at": "2026-09-11T10:00:00+08:00",
+  "version": "0.1.0"
+}
+```
+
+Required fields:
+
+- `memory_id`
+- `scenario_id`
+- `scope`
+- `memory_type`
+- `allowed_use`
+- `content.summary`
+- `source_refs`
+- `confidence`
+- `status`
+- `created_at`
+- `version`
+
+Allowed `memory_type` values in the first phase:
+
+- `process_lesson`
+- `reporting_preference`
+- `workflow_recovery_hint`
+- `repeated_exception_summary`
+- `suppressed_pattern`
+
+Rejected `memory_type` values:
+
+- `industry_rule`
+- `domain_fact`
+- `policy_document`
+- `contract_interpretation`
+- `metric_definition`
+
+Allowed `allowed_use` values:
+
+- `resume_task`
+- `workflow_hint`
+- `report_format_hint`
+- `exception_learning_prompt`
+- `debugging_hint`
+
+The Context Manager must reject records whose `allowed_use` does not match the current node purpose.
 
 ## ScenarioCheckpointWriter
 
@@ -280,6 +435,52 @@ The user response creates a draft. It does not change runtime behavior directly.
 }
 ```
 
+## Candidate State Machines
+
+Exception candidates have a separate lifecycle from active memory and active Skills.
+
+```text
+observed
+-> candidate_created
+-> threshold_met
+-> pending_user_decision
+-> user_selected_action
+-> draft_created
+-> lint_passed
+-> tests_passed
+-> approved
+-> activated
+```
+
+Terminal states:
+
+- `ignored`
+- `rejected`
+- `suppressed`
+- `expired`
+- `superseded`
+
+Rules:
+
+- `observed` can be created from one event, but it cannot prompt the user.
+- `threshold_met` requires the exception learning policy to pass.
+- `pending_user_decision` is the first user-facing state.
+- `draft_created` still has no runtime effect.
+- `activated` requires approval and version publication.
+- Suppressed patterns must record who suppressed them and when to ask again, if ever.
+
+Process memory records have a simpler lifecycle:
+
+```text
+candidate
+-> validated
+-> active
+-> stale
+-> expired
+```
+
+Only `active` process memory can be considered by Context Manager, and even then only as a hint.
+
 ## Candidate Actions
 
 PowerBanana can propose:
@@ -349,7 +550,73 @@ Context Manager must not inject:
 - Memory items with `allowed_use` incompatible with the current node.
 - Any memory item that conflicts with current TaskBlackboard evidence or EvaluationResults.
 
+## Context Injection Policy
+
+Memory injection should be bounded and purpose-specific.
+
+Suggested budgets:
+
+```yaml
+context_memory_budget:
+  checkpoint_tokens: 700
+  task_progress_tokens: 500
+  process_memory_tokens: 500
+  exception_prompt_tokens: 500
+  episode_search_tokens: 800
+```
+
+Injection rules:
+
+- Checkpoint and task progress may be injected when resuming or continuing a long task.
+- Process Memory may be injected at task start as a frozen scenario snapshot.
+- Exception candidates may be injected only when the system is asking the user for a decision.
+- Episode summaries are retrieved on demand; they are not injected by default.
+- Distill drafts are never injected as instructions for normal task execution.
+
+If token budget is exceeded, the priority order is:
+
+1. Current TaskBlackboard state.
+2. Blocking EvaluationResults and Human Gates.
+3. Checkpoint next action.
+4. Task progress summary.
+5. Active Process Memory.
+6. Episode search results.
+7. Exception candidates for user confirmation.
+
+## Memory Safety
+
+Because memory can enter prompts, every memory item must be treated as potentially unsafe until validated.
+
+Validation should check:
+
+- Prompt-injection phrases.
+- Credential exfiltration requests.
+- Hidden or bidirectional Unicode characters.
+- Unsupported `memory_type`.
+- Unsupported `allowed_use`.
+- Missing source refs.
+- Sensitive values that violate retention policy.
+- Business knowledge content that belongs in Knowledge Base.
+
+Unsafe items are rejected or quarantined as candidates. They are not injected into Context Manager output.
+
+Memory conflict rules:
+
+- Current TaskBlackboard evidence beats memory.
+- Current EvaluationResults beat memory.
+- Human Gate decisions beat memory.
+- Future Knowledge Base retrievals beat memory for domain facts.
+- Newer approved process memory beats older process memory only when it supersedes the old record explicitly.
+
 ## Phased Rollout
+
+Phase 0: current baseline
+
+- `MemoryManager.write_task_summary()` writes a minimal task summary to the in-memory TaskBlackboard.
+- No persistent small-capacity memory.
+- No checkpoint files.
+- No Episode Store.
+- No MemoryPathGuard.
 
 Phase 1:
 
@@ -359,6 +626,7 @@ Phase 1:
 - Episode summaries.
 - MemoryPathGuard.
 - No long-term automatic writes.
+- Small-capacity scenario `MEMORY.md` generated from approved process memory.
 
 Phase 2:
 
@@ -381,13 +649,19 @@ Tests should cover:
 - Rejection of ordinary-agent writes to checkpoint-owned files.
 - Checkpoint reconstruction from `CHECKPOINT.md` and task progress.
 - Episode creation without raw source document leakage.
+- Small-capacity `MEMORY.md` budget enforcement.
+- Process Memory schema validation.
+- Rejection of unsupported `memory_type` and `allowed_use`.
+- Rejection or quarantine of prompt-injection-like memory content.
 - Exception candidate creation only after threshold triggers.
 - No suggestion when repeated signal is below threshold.
+- Suppression state preventing repeated prompts for ignored patterns.
 - User confirmation creates a draft, not an enabled Skill.
 - Existing Skill modification creates a versioned draft.
 - New Skill proposal stays scenario-local.
 - Distill drafts cannot affect runtime until linting, tests, and approval pass.
 - Context Manager refuses to inject unapproved candidates as instructions.
+- Context Manager respects memory token budgets and priority order.
 - Memory does not override TaskBlackboard, EvaluationResult, Human Gate, or Knowledge Base evidence.
 
 ## Success Criteria
