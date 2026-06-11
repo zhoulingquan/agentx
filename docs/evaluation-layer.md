@@ -212,6 +212,7 @@ A Scenario Pack cannot move to `enabled` unless evaluation is complete enough to
 - Evaluation Policy linting passes.
 - Baseline evaluators are present.
 - Every Skill output has an evaluator or explicit human review path.
+- Skill-level evaluator bindings match the selected scenario's allowed `global:` and `local:` Skills.
 - Every high-risk rule maps to Human Gate.
 - Fan-in nodes have fan-in evaluator coverage.
 - At least one positive golden case exists.

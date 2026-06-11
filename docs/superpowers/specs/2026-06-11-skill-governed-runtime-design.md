@@ -218,6 +218,69 @@ golden_cases:
 
 The manifest is not an execution permission by itself. It is an input to validation. The runtime still decides whether a requested Skill can run in the current scenario, autonomy level, tool policy, and risk context.
 
+## Skill Folder Isolation
+
+Skills should be split into global Skills and scenario-local Skills.
+
+Global Skills live in a shared registry and may be reused across scenarios:
+
+```text
+skills/
+  global/
+    profile_dataset/
+      SKILL.md
+      handler.py
+      tests/
+    summarize_report/
+      SKILL.md
+      handler.py
+      tests/
+```
+
+Scenario-local Skills live inside one scenario directory and are not reusable by default:
+
+```text
+scenario_packs/
+  contract_payment_review/
+    skills/
+      extract_contract_terms/
+        SKILL.md
+        handler.py
+        tests/
+      detect_payment_risk/
+        SKILL.md
+        handler.py
+        tests/
+```
+
+Global Skill rules:
+
+- Must be reviewed as reusable platform capabilities.
+- Must have stable input and output schemas.
+- Must have versioned manifests.
+- Must avoid domain-specific hidden assumptions.
+- May be referenced by multiple Scenario Packs through exact versions.
+
+Scenario-local Skill rules:
+
+- Belongs to exactly one Scenario Pack.
+- Resolves only under that scenario directory.
+- Cannot be referenced by another scenario unless promoted through an explicit review into `skills/global/`.
+- Can use domain terminology and domain evaluators from its owning scenario.
+- Must still use ToolGateway, TaskBlackboard, ContextManager, and EvaluationRunner boundaries.
+
+Example Skill references:
+
+```yaml
+allowed_skills:
+  - global:profile_dataset@0.1.0
+  - global:summarize_report@0.1.0
+  - local:extract_contract_terms@0.1.0
+  - local:detect_payment_risk@0.1.0
+```
+
+The `local:` prefix always resolves inside the selected scenario directory. The `global:` prefix resolves only from the approved global Skill registry. A Scenario Pack cannot reference another scenario's local Skills.
+
 ## Scenario Pack
 
 A Scenario Pack should assemble a business scenario without changing the core runtime.
@@ -296,6 +359,11 @@ scenario_packs/
       human_gate_policy.yaml
     contracts/
       evaluation_contract.yaml
+    skills/
+      compute_grouped_metric/
+        SKILL.md
+        handler.py
+        tests/
     golden_cases/
       conversion_rate_basic.json
     calibration_cases/
@@ -323,6 +391,7 @@ scenario_packs/
     plans/
     policies/
     contracts/
+    skills/
     golden_cases/
     calibration_cases/
     drafts/
@@ -339,7 +408,8 @@ Rules:
 - Golden and calibration cases are scenario-local.
 - Drafts and change requests are scenario-local.
 - Compiled Evaluation Contracts are scenario-local and versioned.
-- Shared Skills and shared baseline evaluators may live outside scenario directories, but the Scenario Pack must reference exact versions.
+- Scenario-local Skills live under the scenario directory and cannot be referenced by other scenarios.
+- Shared Skills and shared baseline evaluators may live outside scenario directories, but the Scenario Pack must reference exact versions from approved registries.
 - A runtime task resolves files only through its pinned `scenario_id` and `scenario_version`.
 - Cross-scenario file references are denied unless the target is from an approved shared registry.
 
@@ -579,17 +649,20 @@ The Planner may choose Skills, but it only creates candidates. Before execution,
 2. The selected Scenario Pack has a valid paired Evaluation Contract.
 3. All scenario-local files resolve under the selected scenario directory.
 4. Cross-scenario file references are rejected unless they point to an approved shared registry.
-5. Every Skill exists, is versioned, and is allowed by the Scenario Pack.
-6. Each Skill input can be satisfied by prior outputs, user input, or allowed ToolGateway results.
-7. Tool permissions match the Skill manifest and scenario policy.
-8. Context references are limited to authorized Blackboard, Memory, and dataset views.
-9. Required baseline, Skill-level, scenario-level, fan-in, and report evaluators are present and versioned.
-10. Human Gate requirements are attached for risky operations.
-11. DAG and Step Plan topology is acyclic and bounded.
-12. Autonomy Policy allows the proposed number of steps, alternatives, retries, and parallelism.
-13. Concurrency Policy allows every parallel-ready layer.
-14. Merge Policy covers any fan-in node or shared logical artifact.
-15. Golden and calibration case requirements are satisfied for enabled scenarios.
+5. Global Skill references resolve only from the approved global Skill registry.
+6. Local Skill references resolve only under the selected scenario directory.
+7. Cross-scenario local Skill references are rejected.
+8. Every Skill exists, is versioned, and is allowed by the Scenario Pack.
+9. Each Skill input can be satisfied by prior outputs, user input, or allowed ToolGateway results.
+10. Tool permissions match the Skill manifest and scenario policy.
+11. Context references are limited to authorized Blackboard, Memory, and dataset views.
+12. Required baseline, Skill-level, scenario-level, fan-in, and report evaluators are present and versioned.
+13. Human Gate requirements are attached for risky operations.
+14. DAG and Step Plan topology is acyclic and bounded.
+15. Autonomy Policy allows the proposed number of steps, alternatives, retries, and parallelism.
+16. Concurrency Policy allows every parallel-ready layer.
+17. Merge Policy covers any fan-in node or shared logical artifact.
+18. Golden and calibration case requirements are satisfied for enabled scenarios.
 
 Only a passing candidate becomes a frozen executable plan.
 
@@ -606,6 +679,8 @@ Framework hard constraints:
 - Final answers require EvaluationRunner aggregation.
 - Enabled scenarios require a valid paired Evaluation Contract.
 - Scenario-local files must resolve under the pinned scenario directory.
+- Scenario-local Skills must resolve under the pinned scenario directory.
+- Cross-scenario local Skill reuse is denied by default.
 - Writes and high-risk actions require Human Gate.
 - Raw user content remains untrusted unless transformed by verified tools.
 - Parallel nodes cannot read each other's private state or direct messages.
@@ -755,7 +830,9 @@ PowerBanana should migrate incrementally.
 17. Add rule maintenance change requests that create new draft pack versions instead of editing enabled packs in place.
 18. Add one user-friendly builder path that collects both scenario requirements and evaluation requirements through guided questions.
 19. Add scenario directory isolation checks for file resolution and cross-scenario references.
-20. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
+20. Add global and scenario-local Skill registries with explicit `global:` and `local:` resolution.
+21. Add a promotion path for turning a scenario-local Skill into a reviewed global Skill.
+22. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, and policy gates.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -770,6 +847,10 @@ Tests should cover:
 - Rejection of enabled Scenario Packs without a paired Evaluation Contract.
 - Rejection of scenario-local files outside the pinned scenario directory.
 - Rejection of unapproved cross-scenario references.
+- Rejection of `local:` Skill references outside the pinned scenario directory.
+- Rejection of another scenario's local Skill.
+- Acceptance of approved `global:` Skill references by exact version.
+- Skill promotion tests proving local Skills cannot become global without review, versioning, tests, and approval.
 - Rejection of unknown or disabled Skills.
 - Rejection of Skills that request unauthorized tools.
 - Rejection of missing required evaluators.
@@ -816,5 +897,7 @@ Every enabled Scenario Pack must have a paired Evaluation Contract that covers b
 Scenario and Evaluation builders should run during initialization or explicit rule-maintenance flows only. Normal task execution should use pinned, enabled Scenario Pack and Evaluation Contract versions without regenerating configuration.
 
 Each scenario must own its generated files under its own scenario directory. Runtime file resolution must use the pinned scenario directory and deny accidental mixing of plans, DAGs, policies, evaluators, golden cases, calibration cases, drafts, or change requests from another scenario.
+
+Global Skills may be reused across scenarios only through the approved global Skill registry. Scenario-local Skills remain isolated inside their owning scenario directory and cannot be used by other scenarios unless promoted to global through review, tests, versioning, and approval.
 
 The framework should become more open, but the acceptance rule remains strict: no Skill result becomes trusted merely because a Skill produced it. It becomes trusted only after the framework records, evaluates, and gates it.
