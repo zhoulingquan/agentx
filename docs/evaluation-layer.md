@@ -2,7 +2,7 @@
 
 PowerBanana uses a deterministic, extensible Evaluation Layer. Evaluators inspect structured context and return an `EvaluatorOutcome`; the `EvaluationRunner` aggregates all outcomes into one `EvaluationResult`.
 
-The layer now evaluates three targets:
+The layer now evaluates four targets:
 
 | Target | Entry Point | Report Field |
 |---|---|---|
@@ -51,6 +51,143 @@ If the Planner marks `needs_vocabulary_suggestion`, PowerBanana profiles the dat
 | `needs_clarification` | Ask the user for clarification |
 | `human_review` | Require human review |
 | `block` | Do not return the candidate as a final answer |
+
+## User-Friendly Evaluation
+
+Evaluation should be usable by non-technical domain owners. Users should be able to describe what a good result means, what must be checked, and when a person should review the output, without writing evaluator code.
+
+The user-friendly layer has three parts:
+
+| Part | Purpose |
+|---|---|
+| Evaluation Assistant | Uses guided LLM conversation to collect quality rules from the user |
+| Evaluation Policy / Contract | Stores the structured, linted rules that the runtime can execute |
+| Human-Friendly Evaluation Report | Explains evaluation results in business language while preserving technical audit fields |
+
+The LLM is only a drafting and explanation assistant. It does not decide whether a result is trusted, cannot disable baseline evaluators, and cannot enable a scenario by itself.
+
+## Evaluation Assistant
+
+The Evaluation Assistant should ask targeted questions while a Scenario Pack is being created or revised:
+
+1. What should a good final answer contain?
+2. Which mistakes are unacceptable?
+3. Which claims must cite evidence, source rows, or source text?
+4. Which conditions should return a partial result?
+5. Which conditions should ask the user for clarification?
+6. Which conditions require human review?
+7. What risk thresholds or business rules matter?
+8. Can the user provide one good example and one bad example?
+
+The assistant may generate:
+
+- `EVALUATION.md` draft.
+- Structured Evaluation Contract draft.
+- Golden case drafts.
+- Calibration case drafts.
+- Plain-language explanations of linter failures.
+
+The assistant must not:
+
+- Disable baseline evaluators such as schema, evidence, context security, or source-version checks.
+- Mark high-risk rules as automatically passing.
+- Enable unregistered evaluators.
+- Bypass calibration cases.
+- Approve or enable its own draft.
+- Treat natural-language prose as executable policy.
+
+## Evaluation Contract
+
+Every enabled Scenario Pack must have a paired Evaluation Contract. The contract binds the scenario, Skills, expected artifacts, required evaluators, and gate rules.
+
+Example:
+
+```yaml
+evaluation_contract:
+  scenario_id: contract_payment_review
+  version: 0.1.0
+  required_baseline_evaluators:
+    - schema_evaluator@0.1.0
+    - evidence_coverage_evaluator@0.1.0
+    - context_security_evaluator@0.1.0
+  skill_output_checks:
+    extract_contract_terms@0.1.0:
+      output_schema: ContractTerms
+      required_evaluators:
+        - schema_evaluator@0.1.0
+        - evidence_coverage_evaluator@0.1.0
+    detect_payment_risk@0.1.0:
+      output_schema: PaymentRiskFinding
+      required_evaluators:
+        - contract_payment_rule_evaluator@0.1.0
+  gate_rules:
+    - id: missing_payment_terms
+      condition: payment_terms.not_found
+      gate_action: human_review
+    - id: claim_without_evidence
+      condition: report.claims_without_evidence > 0
+      gate_action: block
+```
+
+`SCENARIO.md` explains how the scenario runs. `EVALUATION.md` explains how the scenario is judged. The runtime compiles both into the contract and executes only the structured fields that pass linting.
+
+## Evaluation Layers
+
+Evaluation should run in layers:
+
+| Layer | Purpose | User configurable |
+|---|---|---|
+| Baseline | Schema, evidence, context safety, source version, ToolGateway boundary | No |
+| Skill | Checks each Skill output against its schema and evidence requirements | Limited by Skill manifest |
+| Scenario | Domain-specific business rules and thresholds | Yes, through builder and approval |
+| Fan-in | Checks whether parallel outputs can be merged safely | Yes, through merge policy |
+| Report | Checks final answer completeness, support, and safety | Yes, with baseline checks required |
+
+The scheduler uses the strongest resulting gate action when deciding whether to continue, retry, ask for clarification, route to human review, return a partial result, or block.
+
+## Human-Friendly Reports
+
+Runtime reports should expose both machine fields and user-facing explanations.
+
+Technical form:
+
+```json
+{
+  "gate_action": "block",
+  "failure_reasons": ["evidence_ref_not_in_step_trace"],
+  "blocking_issues": ["missing evidence for report claim"]
+}
+```
+
+User-facing form:
+
+```text
+Result not approved.
+
+Why:
+- One report claim is missing a source reference.
+
+What to do:
+- Add a source quote, source row, or route this result to human review.
+```
+
+The plain-language explanation may be generated with LLM assistance, but it must be grounded in the structured `EvaluationResult`. It cannot soften or override the gate action.
+
+## Scenario Enablement
+
+A Scenario Pack cannot move to `enabled` unless evaluation is complete enough to protect the workflow:
+
+- `EVALUATION.md` exists.
+- Evaluation Policy linting passes.
+- Baseline evaluators are present.
+- Every Skill output has an evaluator or explicit human review path.
+- Every high-risk rule maps to Human Gate.
+- Fan-in nodes have fan-in evaluator coverage.
+- At least one positive golden case exists.
+- At least one negative or escalation calibration case exists.
+- A domain owner or administrator approves the pack.
+
+See [Skill-Governed Runtime Design](superpowers/specs/2026-06-11-skill-governed-runtime-design.md) for the paired Scenario Pack and Evaluation Contract design.
 
 ## Custom Evaluator
 
