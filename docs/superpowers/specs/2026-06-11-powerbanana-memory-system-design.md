@@ -8,6 +8,7 @@ The current boundary is:
 
 - Memory stores runtime continuity, process experience, and repeated exception candidates.
 - Knowledge Base will later store industry knowledge, enterprise policies, domain references, and authoritative business facts.
+- Memory is layered into Short-Term Runtime Memory, Mid-Term Episodic Memory, Long-Term Governed Memory, and an Evolution Memory Loop.
 
 This design is inspired by MiMo-Code's checkpoint, task progress, and memory maintenance patterns, but narrows them for PowerBanana's governed, scenario-based runtime.
 
@@ -56,9 +57,9 @@ The current code has only a minimal working-memory seed:
 - It is not loaded at the beginning of a later task.
 - It is not bounded, curated, searched, approved, or injected through Context Manager as a frozen memory snapshot.
 
-Therefore the current implementation should be treated as a seed for the future Memory boundary, not as the final small-capacity memory system.
+Therefore the current implementation should be treated as a seed for the future Memory boundary, not as the final layered memory system.
 
-The first design milestone should be a small, scenario-local Process Memory snapshot, not full long-term memory.
+The first design milestone should establish Short-Term Runtime Memory and a small scenario-local Process Memory snapshot. Mid-Term Episode Search, Long-Term Governed Memory, and Evolution Loop behavior should then be enabled progressively.
 
 ## External Lessons Adopted
 
@@ -73,6 +74,7 @@ From Hermes Agent, PowerBanana should adopt:
 
 - Small, bounded memory that stays high-signal.
 - Session search adapted as structured Episode search.
+- SQLite + FTS5 as a local, rebuildable Episode Search backend for lightweight deployments.
 - Skills as procedural memory, where repeatable procedures become Skill drafts rather than prose memory.
 - Write approval for memory and Skill changes.
 - Security scanning before memory is injected into prompts.
@@ -81,6 +83,7 @@ PowerBanana should not adopt:
 
 - Free-form personal memory as a business decision input.
 - Raw transcript search exposed directly to agents.
+- A single global SQLite database that bypasses scenario isolation or path guards.
 - Agent-managed Skill writes that become active automatically.
 - External memory providers in the first implementation phase.
 - Industry knowledge storage inside Memory.
@@ -106,6 +109,145 @@ flowchart TD
 
 TaskBlackboard remains the current-task fact source. Memory stores summaries, state, and improvement candidates around that fact source.
 
+## Four-Layer Memory Model
+
+PowerBanana should treat memory as four governed layers. The layers differ by lifespan, writer, retrieval mode, and whether they are allowed to influence runtime behavior.
+
+```mermaid
+flowchart TD
+    STM["Layer 1: Short-Term Runtime Memory"] --> MTE["Layer 2: Mid-Term Episodic Memory"]
+    MTE --> LTM["Layer 3: Long-Term Governed Memory"]
+    MTE --> EVO["Layer 4: Evolution Memory Loop"]
+    LTM --> CTX["Context Manager"]
+    STM --> CTX
+    EVO --> DRAFTS["Draft Skills / Evaluators / Golden Cases"]
+    DRAFTS --> GOV["Lint / Replay / Approval"]
+    GOV --> LTM
+```
+
+### Layer 1: Short-Term Runtime Memory
+
+Goal:
+
+- Keep the current task coherent while the main agent, sub-agents, tools, DAG nodes, evaluations, and Human Gates are running.
+- Recover from context compaction, crashes, or long-running task pauses.
+- Coordinate parallel sub-agents without letting every agent write durable memory directly.
+
+Stores:
+
+- Current TaskBlackboard state.
+- `CHECKPOINT.md`.
+- `tasks/<task_id>/progress.md`.
+- `notes.md`.
+- DAG node state, sub-agent progress, pending gates, and next action.
+
+Lifecycle:
+
+- Created when a scenario task starts.
+- Updated during execution by TaskBlackboard and `ScenarioCheckpointWriter`.
+- Closed when the task is finalized.
+- Summarized into an Episode candidate after task closure.
+
+Rules:
+
+- It is the highest-priority memory layer during task execution.
+- It must not be used as long-term evidence after the task is closed.
+- Ordinary agents may write task artifacts through TaskBlackboard, but they cannot write checkpoint-owned files.
+- If Short-Term Runtime Memory conflicts with any older memory, the current short-term state wins.
+
+### Layer 2: Mid-Term Episodic Memory
+
+Goal:
+
+- Remember recent completed tasks, failures, fixes, user corrections, evaluation outcomes, and repeated exception signals.
+- Support similar-task recovery and controlled exception detection.
+- Provide a searchable history without exposing raw transcripts or source documents to agents.
+
+Stores:
+
+- `episodes/<episode_id>.json` as the auditable source of truth.
+- A rebuildable local search index under `index/`.
+- Optional replay snapshots and EvaluationResult summaries by reference.
+
+Lifecycle:
+
+- Created from a closed TaskBlackboard summary.
+- Indexed after redaction and policy checks.
+- Retained for a scenario-defined window such as 30, 60, or 90 days.
+- Compressed or expired when it no longer contributes to recovery, exception detection, or audit.
+
+Rules:
+
+- Episode Search is on-demand; it is not injected by default.
+- Search results enter prompts only through Context Manager.
+- Search results are evidence pointers and recovery hints, not business truth.
+- Cross-scenario Episode Search is disabled by default.
+
+### Layer 3: Long-Term Governed Memory
+
+Goal:
+
+- Keep stable, approved process knowledge for one scenario.
+- Preserve workflow preferences, reporting preferences, durable recovery hints, and repeated exception summaries.
+- Feed runtime as bounded hints, not as authoritative facts.
+
+Stores:
+
+- Structured records under `records/<memory_id>.json`.
+- A human-readable `MEMORY.md` snapshot derived from approved records.
+- Approved Skill, evaluator, golden case, or calibration case versions when repeated process lessons should become procedural assets.
+
+Lifecycle:
+
+- Starts as a candidate generated from Episodes, evaluations, or user confirmations.
+- Passes schema validation, safety checks, source-reference checks, and policy gates.
+- Becomes active only after approval or an allowed governance rule.
+- Can become stale, superseded, expired, or rolled back.
+
+Rules:
+
+- It must not store industry knowledge, domain facts, policy text, or metric definitions.
+- It is scenario-local unless explicitly promoted through a separate global review.
+- It can be injected only within strict token budgets and only when `allowed_use` matches the current node.
+- It loses to TaskBlackboard, EvaluationResults, Human Gates, and Knowledge Base retrievals.
+
+### Layer 4: Evolution Memory Loop
+
+Goal:
+
+- Turn repeated special cases in fixed enterprise workflows into user-reviewed improvements.
+- Help the system learn where workflows need a new Skill, a Skill change, an evaluator, a Human Gate, or a golden/calibration case.
+- Keep self-improvement explicit, inspectable, reversible, and scenario-local by default.
+
+Stores:
+
+- Exception candidates.
+- Distill candidates.
+- Proposed Skill, evaluator, golden case, calibration case, and process memory drafts.
+- User decisions and suppression records.
+
+Lifecycle:
+
+```text
+episode signals
+-> repeated pattern detected
+-> candidate created
+-> user asked in business language
+-> draft generated
+-> lint and replay
+-> approval
+-> versioned activation
+-> monitoring
+-> rollback or supersession if quality drops
+```
+
+Rules:
+
+- One odd case can create an observation, but it cannot trigger self-modification.
+- User confirmation creates only a draft.
+- Drafts do not influence normal runtime until validation and approval finish.
+- Evolution outputs remain scenario-local unless promoted through multi-scenario evidence and review.
+
 ## Directory Shape
 
 Memory is scenario-local by default:
@@ -117,11 +259,16 @@ scenario_packs/
       CHECKPOINT.md
       MEMORY.md
       notes.md
+      records/
+        <memory_id>.json
       tasks/
         <task_id>/
           progress.md
       episodes/
         <episode_id>.json
+      index/
+        episode_index.sqlite
+        rebuild_manifest.json
       candidates/
         <candidate_id>.json
       distill/
@@ -133,22 +280,28 @@ scenario_packs/
 
 `MEMORY.md` is a human-readable scenario process memory summary, not a domain knowledge file.
 
+`index/episode_index.sqlite` is a derived search index. It can be deleted and rebuilt from `episodes/*.json` and `records/*.json`; it is not the source of truth.
+
 ## Memory Types
 
-| Type | Stores | Lifetime | Runtime Use |
-|---|---|---|---|
-| TaskBlackboard | Current task artifacts, tool results, traces, EvaluationResults | Task | Current-task fact source |
-| Checkpoint | Intent, next action, DAG state, sub-agent state, gates | Task/session | Recovery |
-| Task Progress | Per-task and per-sub-agent progress | Task/session | Recovery and audit |
-| Notes | Temporary scratch notes | Task/session | Writer-owned scratch |
-| Episode | Closed task summary, failure/fix summary, evaluation outcome summary | Short to medium | Similar task recovery and exception detection |
-| Process Memory | Stable workflow preference or process lesson | Medium to long | Context hint only |
-| Exception Candidate | Repeated special case in a fixed workflow | Until accepted/discarded | User confirmation |
-| Distill Candidate | Draft Skill/evaluator/golden/calibration change | Until approved/discarded | Governance workflow only |
+| Layer | Type | Stores | Lifetime | Runtime Use |
+|---|---|---|---|---|
+| Short-Term Runtime | TaskBlackboard | Current task artifacts, tool results, traces, EvaluationResults | Task | Current-task fact source |
+| Short-Term Runtime | Checkpoint | Intent, next action, DAG state, sub-agent state, gates | Task/session | Recovery |
+| Short-Term Runtime | Task Progress | Per-task and per-sub-agent progress | Task/session | Recovery and audit |
+| Short-Term Runtime | Notes | Temporary scratch notes | Task/session | Writer-owned scratch |
+| Mid-Term Episodic | Episode | Closed task summary, failure/fix summary, evaluation outcome summary | Short to medium | Similar task recovery and exception detection |
+| Mid-Term Episodic | Episode Search Index | Redacted searchable fields derived from Episodes | Rebuildable | On-demand search through Context Manager |
+| Long-Term Governed | Process Memory | Stable workflow preference or process lesson | Medium to long | Context hint only |
+| Long-Term Governed | Structured Memory Record | Approved process memory source record with lifecycle metadata | Medium to long | Source for `MEMORY.md` snapshot |
+| Evolution Loop | Exception Candidate | Repeated special case in a fixed workflow | Until accepted/discarded | User confirmation |
+| Evolution Loop | Distill Candidate | Draft Skill/evaluator/golden/calibration change | Until approved/discarded | Governance workflow only |
 
 ## Small-Capacity Process Memory
 
 PowerBanana should start with a small-capacity, scenario-local process memory snapshot. This is the closest equivalent to Hermes-style bounded memory, but it is narrower and enterprise-governed.
+
+This snapshot belongs to Layer 3: Long-Term Governed Memory. It is generated from approved structured records and injected only as bounded process hints.
 
 File:
 
@@ -207,17 +360,22 @@ Example:
   "memory_id": "mem_proc_001",
   "scenario_id": "sales_channel_analysis",
   "scope": "scenario",
+  "layer": "long_term_governed",
   "memory_type": "process_lesson",
   "allowed_use": "report_format_hint",
   "content": {
     "summary": "Reports are clearer when metric ranking includes both value and row count."
   },
   "source_refs": ["episode_2026_06_11_001", "eval_result_003"],
+  "promotion_reason": "Repeated user correction appeared in 3 recent episodes.",
   "confidence": 0.82,
   "status": "active",
+  "owner": "scenario_owner",
   "created_at": "2026-06-11T10:00:00+08:00",
   "last_verified_at": "2026-06-11T10:00:00+08:00",
+  "review_after": "2026-09-11T10:00:00+08:00",
   "expires_at": "2026-09-11T10:00:00+08:00",
+  "supersedes": [],
   "version": "0.1.0"
 }
 ```
@@ -227,13 +385,16 @@ Required fields:
 - `memory_id`
 - `scenario_id`
 - `scope`
+- `layer`
 - `memory_type`
 - `allowed_use`
 - `content.summary`
 - `source_refs`
 - `confidence`
 - `status`
+- `owner`
 - `created_at`
+- `review_after`
 - `version`
 
 Allowed `memory_type` values in the first phase:
@@ -261,6 +422,15 @@ Allowed `allowed_use` values:
 - `debugging_hint`
 
 The Context Manager must reject records whose `allowed_use` does not match the current node purpose.
+
+Allowed `layer` values:
+
+- `short_term_runtime`
+- `mid_term_episodic`
+- `long_term_governed`
+- `evolution_loop`
+
+Only `long_term_governed` records can generate the active `MEMORY.md` snapshot. `mid_term_episodic` records are retrieved through Episode Search. `evolution_loop` records are surfaced only in user decision or governance flows.
 
 ## ScenarioCheckpointWriter
 
@@ -349,6 +519,89 @@ Example:
   ]
 }
 ```
+
+## Episode Search Index
+
+PowerBanana should borrow Hermes Agent's lightweight local search idea, but adapt it as a scenario-local Episode Search index.
+
+Default local backend:
+
+```text
+scenario_packs/<scenario_id>/memory/index/episode_index.sqlite
+```
+
+The default lightweight implementation should use SQLite + FTS5 when available. The index is suitable for local development, single-scenario deployments, desktop usage, and early enterprise pilots. It should remain replaceable by PostgreSQL FTS, pgvector, OpenSearch, or a managed search service in later platform deployments.
+
+The SQLite file is derived state:
+
+- It is rebuilt from `episodes/*.json` and approved `records/*.json`.
+- It must not be edited by agents.
+- It must not be the only copy of any memory.
+- It must be scoped to one scenario directory.
+- It must be protected by `MemoryPathGuard`.
+
+Suggested indexed fields:
+
+```sql
+episode_id
+scenario_id
+scenario_version
+task_goal_summary
+workflow_path
+skill_ids
+failure_summary
+fix_summary
+evaluation_summary
+human_gate_summary
+user_correction_summary
+special_case_summary
+created_at
+retention_until
+redaction_level
+```
+
+FTS5 should index only redacted text fields:
+
+- `task_goal_summary`
+- `failure_summary`
+- `fix_summary`
+- `evaluation_summary`
+- `human_gate_summary`
+- `user_correction_summary`
+- `special_case_summary`
+
+It must not index:
+
+- Raw transcripts.
+- Raw uploaded documents.
+- Full tool outputs.
+- Sensitive values outside retention policy.
+- Knowledge Base passages copied as text.
+- Hidden instructions found in source data.
+
+Search flow:
+
+```text
+Context Manager requests similar-task context
+-> MemoryPathGuard pins scenario_id and scenario_root
+-> EpisodeSearch queries SQLite FTS5
+-> results are filtered by retention, redaction, and allowed_use
+-> results are ranked and clipped to token budget
+-> Context Manager injects summaries with source refs only
+```
+
+Search results should include:
+
+- `episode_id`
+- matched summary field
+- short excerpt or generated summary
+- score
+- created time
+- scenario version
+- relevant Skills and evaluators
+- source refs for audit
+
+The agent never receives arbitrary SQL access. It can only ask Context Manager for an approved retrieval purpose such as `resume_task`, `debugging_hint`, or `exception_learning_prompt`.
 
 ## Exception Learning Assistant
 
@@ -450,6 +703,8 @@ observed
 -> tests_passed
 -> approved
 -> activated
+-> monitored
+-> retained_or_rolled_back
 ```
 
 Terminal states:
@@ -459,6 +714,7 @@ Terminal states:
 - `suppressed`
 - `expired`
 - `superseded`
+- `rolled_back`
 
 Rules:
 
@@ -467,6 +723,8 @@ Rules:
 - `pending_user_decision` is the first user-facing state.
 - `draft_created` still has no runtime effect.
 - `activated` requires approval and version publication.
+- `monitored` tracks whether the change improves evaluator results, reduces Human Gate frequency, or reduces repeated user corrections.
+- `retained_or_rolled_back` must record the decision, evidence, and rollback target when relevant.
 - Suppressed patterns must record who suppressed them and when to ask again, if ever.
 
 Process memory records have a simpler lifecycle:
@@ -480,6 +738,51 @@ candidate
 ```
 
 Only `active` process memory can be considered by Context Manager, and even then only as a hint.
+
+## Layer Promotion And Demotion
+
+Memory does not move between layers automatically just because it exists. Each promotion requires evidence, policy checks, and the right approval boundary.
+
+Default promotion path:
+
+```text
+Short-Term Runtime Memory
+-> closed TaskBlackboard summary
+-> Mid-Term Episode
+-> repeated pattern or explicit user preference
+-> Memory Candidate
+-> policy and safety validation
+-> user or administrator approval
+-> Long-Term Governed Memory or scenario-local Skill/Evaluator/Golden Case draft
+```
+
+Promotion rules:
+
+- Short-Term Runtime Memory can create an Episode only after task closure.
+- One Episode can create a candidate, but cannot create Long-Term Governed Memory by itself unless the user explicitly marks it as a stable preference.
+- Repeated Episode signals can create an Exception Candidate when the threshold policy passes.
+- Long-Term Governed Memory requires source refs, confidence, allowed use, expiry or review date, and an owner.
+- Skill, evaluator, golden case, and calibration case changes require linting, replay, and approval before activation.
+
+Demotion and cleanup rules:
+
+- Old Episodes can be compressed into aggregate summaries when they exceed retention windows.
+- Stale Long-Term Governed Memory should move to `stale` before expiry.
+- Superseded records must keep a pointer to the replacing record.
+- Failed evolved Skills or evaluator changes should be rolled back and linked to the candidate that caused the change.
+- Suppressed patterns stay visible in governance records but should not keep prompting the user.
+
+Long-term memory should be reviewed on a schedule:
+
+```yaml
+memory_review_policy:
+  process_memory_review_days: 90
+  episode_retention_days: 60
+  stale_grace_days: 30
+  require_owner_for_long_term: true
+  require_source_refs: true
+  allow_auto_expiry: true
+```
 
 ## Candidate Actions
 
@@ -537,10 +840,10 @@ Memory enters prompts only through Context Manager.
 
 Context Manager may inject:
 
-- Checkpoint state needed for continuation.
-- Task progress summaries.
-- Process Memory relevant to report format or workflow behavior.
-- Exception candidates when asking the user for confirmation.
+- Short-Term Runtime Memory needed for continuation, recovery, or coordination.
+- Mid-Term Episodic Memory returned by approved Episode Search.
+- Long-Term Governed Memory relevant to report format or workflow behavior.
+- Evolution Loop candidates when asking the user for confirmation or running governance review.
 
 Context Manager must not inject:
 
@@ -558,19 +861,22 @@ Suggested budgets:
 
 ```yaml
 context_memory_budget:
+  short_term_runtime_tokens: 1200
   checkpoint_tokens: 700
   task_progress_tokens: 500
+  mid_term_episode_tokens: 800
   process_memory_tokens: 500
-  exception_prompt_tokens: 500
-  episode_search_tokens: 800
+  long_term_governed_tokens: 500
+  evolution_prompt_tokens: 500
 ```
 
 Injection rules:
 
+- Short-Term Runtime Memory is injected when needed for active execution, continuation, recovery, or coordination.
 - Checkpoint and task progress may be injected when resuming or continuing a long task.
-- Process Memory may be injected at task start as a frozen scenario snapshot.
-- Exception candidates may be injected only when the system is asking the user for a decision.
-- Episode summaries are retrieved on demand; they are not injected by default.
+- Mid-Term Episodes are retrieved on demand; they are not injected by default.
+- Long-Term Governed Memory may be injected at task start as a frozen scenario snapshot.
+- Evolution candidates may be injected only when the system is asking the user for a decision or running governance review.
 - Distill drafts are never injected as instructions for normal task execution.
 
 If token budget is exceeded, the priority order is:
@@ -579,9 +885,11 @@ If token budget is exceeded, the priority order is:
 2. Blocking EvaluationResults and Human Gates.
 3. Checkpoint next action.
 4. Task progress summary.
-5. Active Process Memory.
-6. Episode search results.
-7. Exception candidates for user confirmation.
+5. Active Long-Term Governed Process Memory.
+6. Mid-Term Episode search results.
+7. Evolution candidates for user confirmation.
+
+Context Manager must label every injected memory item with its layer, source ref, allowed use, and confidence. Unlabeled memory cannot enter prompts.
 
 ## Memory Safety
 
@@ -597,8 +905,14 @@ Validation should check:
 - Missing source refs.
 - Sensitive values that violate retention policy.
 - Business knowledge content that belongs in Knowledge Base.
+- Search-index poisoning, including malicious text hidden in user corrections, source file cells, filenames, or tool outputs.
 
 Unsafe items are rejected or quarantined as candidates. They are not injected into Context Manager output.
+
+Episode Search has two safety gates:
+
+- Index-time gate: only redacted summaries can enter SQLite FTS5.
+- Retrieval-time gate: matched summaries are scanned again before Context Manager injection.
 
 Memory conflict rules:
 
@@ -620,6 +934,7 @@ Phase 0: current baseline
 
 Phase 1:
 
+- Short-Term Runtime Memory.
 - Scenario-local checkpoints.
 - Task progress.
 - Notes.
@@ -630,12 +945,27 @@ Phase 1:
 
 Phase 2:
 
-- Exception Learning Assistant.
-- Exception Candidate records.
-- Process Memory with strict `allowed_use`.
-- Draft-only Skill, evaluator, golden case, and calibration case suggestions.
+- Mid-Term Episodic Memory.
+- Scenario-local SQLite + FTS5 Episode Search index.
+- Retention, redaction, and rebuild policies for Episodes.
+- Search only through Context Manager.
 
 Phase 3:
+
+- Long-Term Governed Memory records.
+- Process Memory with strict `allowed_use`.
+- Memory promotion, demotion, expiry, supersession, and rollback metadata.
+- Frozen `MEMORY.md` snapshots generated from approved records.
+
+Phase 4:
+
+- Evolution Memory Loop.
+- Exception Learning Assistant.
+- Exception Candidate records.
+- Draft-only Skill, evaluator, golden case, and calibration case suggestions.
+- Replay and monitoring for evolved changes.
+
+Phase 5:
 
 - Knowledge Base integration.
 - Context Manager combines Memory and retrieved knowledge.
@@ -647,10 +977,18 @@ Tests should cover:
 
 - Rejection of cross-scenario memory reads.
 - Rejection of ordinary-agent writes to checkpoint-owned files.
+- Short-Term Runtime Memory closure creating an Episode candidate only after task finalization.
+- Concurrent sub-agent progress reconciliation without corrupting checkpoint-owned files.
 - Checkpoint reconstruction from `CHECKPOINT.md` and task progress.
 - Episode creation without raw source document leakage.
+- SQLite + FTS5 Episode Search indexing only redacted summary fields.
+- Episode Search results filtered by scenario, retention, redaction level, and allowed use.
+- Rebuilding `index/episode_index.sqlite` from Episodes and structured records.
 - Small-capacity `MEMORY.md` budget enforcement.
 - Process Memory schema validation.
+- Layer field validation for `short_term_runtime`, `mid_term_episodic`, `long_term_governed`, and `evolution_loop`.
+- Memory promotion from Episode to Candidate to Long-Term Governed Memory only through policy gates.
+- Stale, expired, superseded, and rolled-back memory records are not injected as active hints.
 - Rejection of unsupported `memory_type` and `allowed_use`.
 - Rejection or quarantine of prompt-injection-like memory content.
 - Exception candidate creation only after threshold triggers.
@@ -660,12 +998,14 @@ Tests should cover:
 - Existing Skill modification creates a versioned draft.
 - New Skill proposal stays scenario-local.
 - Distill drafts cannot affect runtime until linting, tests, and approval pass.
+- Evolved Skill or evaluator changes move into monitoring and can be rolled back.
 - Context Manager refuses to inject unapproved candidates as instructions.
 - Context Manager respects memory token budgets and priority order.
+- Context Manager labels injected memory with layer, source ref, allowed use, and confidence.
 - Memory does not override TaskBlackboard, EvaluationResult, Human Gate, or Knowledge Base evidence.
 
 ## Success Criteria
 
-The Memory System is successful when PowerBanana can resume long-running scenario tasks, explain task progress, and detect repeated special cases in fixed business workflows without storing industry knowledge or changing Skills automatically.
+The Memory System is successful when PowerBanana can resume long-running scenario tasks, explain task progress, search recent similar Episodes, preserve approved process memory, and detect repeated special cases in fixed business workflows without storing industry knowledge or changing Skills automatically.
 
-The agent may ask the user whether a repeated exception should become a Skill or evaluator improvement, but runtime behavior changes only after draft generation, linting, regression checks, and approval.
+The agent may ask the user whether a repeated exception should become a Skill or evaluator improvement, but runtime behavior changes only after draft generation, linting, regression checks, approval, and post-activation monitoring.

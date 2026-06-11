@@ -434,7 +434,7 @@ This prevents the data-analysis runtime from accidentally loading contract-revie
 
 The runtime should add a scenario-scoped state layer inspired by long-horizon coding agents that keep structured checkpoints and memory across sessions. The important lesson is not the coding-agent behavior itself; it is the separation between working state, durable memory, and write permissions.
 
-Scenario memory in this layer means process memory, checkpoint state, progress summaries, and exception-learning candidates. It is not an industry knowledge store; domain knowledge should later come from a separate Knowledge Base integration.
+Scenario memory in this layer means the four-layer memory model defined in the Memory System design: Short-Term Runtime Memory, Mid-Term Episodic Memory, Long-Term Governed Memory, and the Evolution Memory Loop. It includes process memory, checkpoint state, progress summaries, Episode search, and exception-learning candidates. It is not an industry knowledge store; domain knowledge should later come from a separate Knowledge Base integration.
 
 Each active task should be bound to:
 
