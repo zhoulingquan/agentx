@@ -79,6 +79,15 @@ From Hermes Agent, PowerBanana should adopt:
 - Write approval for memory and Skill changes.
 - Security scanning before memory is injected into prompts.
 
+From QwenPaw, PowerBanana should adopt:
+
+- Tool-result offloading plus compact summaries so large tool outputs are stored as refs instead of flooding prompts.
+- A structured context compaction flow that preserves tool-use/tool-result pairs, Human Gates, approvals, and evaluation repair turns.
+- Hybrid retrieval as a future backend option: BM25/FTS for exact process terms, optional vector retrieval for semantically similar Episodes.
+- Heartbeat-style maintenance as a Main Agent governance digest for stale approvals, candidate TTLs, repeated failures, and checkpoint lag.
+- Memory evolution as draft-only suggestions. Repeated facts or exceptions may become Skill, evaluator, golden case, calibration case, or process-memory candidates only after user confirmation and validation.
+- Workspace-copy discipline for procedural memory: active Skills should be read from scenario activation snapshots, not directly from mutable shared Skill pools.
+
 PowerBanana should not adopt:
 
 - Free-form personal memory as a business decision input.
@@ -87,6 +96,7 @@ PowerBanana should not adopt:
 - Agent-managed Skill writes that become active automatically.
 - External memory providers in the first implementation phase.
 - Industry knowledge storage inside Memory.
+- Proactive memory updates that bypass the Main Agent, Scenario Pack validation, or Human Gate.
 
 ## Architecture
 
@@ -808,6 +818,33 @@ Search results should include:
 
 The agent never receives arbitrary SQL access. It can only ask Context Manager for an approved retrieval purpose such as `resume_task`, `debugging_hint`, or `exception_learning_prompt`.
 
+### Hybrid Retrieval Upgrade Path
+
+QwenPaw's hybrid search model is useful later, but PowerBanana should treat it as an Episode Search backend upgrade rather than a domain knowledge store. The default local backend remains SQLite + FTS5 because it is transparent, rebuildable, and easy to scope per scenario. A later enterprise backend may add vector retrieval when exact keyword search misses semantically similar repeated exceptions.
+
+Upgrade rules:
+
+- Hybrid retrieval is allowed only over redacted Episode summaries, approved process-memory records, and governance candidates.
+- It must not index raw contracts, spreadsheets, source documents, full tool outputs, or future Knowledge Base passages copied as memory.
+- BM25/FTS should remain the precision anchor for exact terms such as clause names, evaluator IDs, threshold names, error codes, and Skill IDs.
+- Vector retrieval may provide recall for similar failure patterns, user corrections, or repeated exceptions.
+- Ranking fusion must be deterministic, logged, and clipped by Context Manager budgets.
+- Each result must keep source refs, scenario scope, allowed use, confidence, and redaction labels.
+
+Example future policy:
+
+```yaml
+episode_search_policy:
+  backend: hybrid
+  lexical_backend: sqlite_fts5
+  vector_backend: managed_vector_index
+  lexical_weight: 0.65
+  vector_weight: 0.35
+  require_scope_filter: true
+  require_allowed_use: true
+  require_source_refs: true
+```
+
 ## Exception Learning Assistant
 
 PowerBanana business flows are relatively fixed. Therefore the learning loop should focus on repeated special cases inside those fixed flows, not on open-ended self-improvement.
@@ -868,6 +905,45 @@ Options:
 ```
 
 The user response creates a draft. It does not change runtime behavior directly.
+
+## Memory Maintenance Heartbeat
+
+PowerBanana should use heartbeat-style checks as a read-only governance digest over memory and learning state. This is not a proactive autonomous assistant. It is a scheduled review that tells the Main Agent where attention may be needed.
+
+Heartbeat memory checks:
+
+- Episode index is out of sync with source Episode files.
+- Candidate proposals are near TTL expiry.
+- Repeated exceptions passed threshold but have not been triaged.
+- Process memory records are stale or past review date.
+- A Skill/evaluator draft was created from exception learning but still lacks lint, tests, or approval.
+- Checkpoint summaries have not reconciled recent TaskBlackboard events.
+- Approval or Human Gate decisions referenced by memory candidates are missing or unresolved.
+
+Example digest:
+
+```yaml
+memory_heartbeat_digest:
+  digest_id: mhb_001
+  scenario_id: contract_payment_review
+  generated_at: 2026-06-12T10:00:00+08:00
+  findings:
+    - type: candidate_near_expiry
+      severity: medium
+      ref: memory://contract_payment_review/candidates/exception_001
+      suggested_main_agent_action: ask_user_or_defer
+    - type: episode_index_lag
+      severity: low
+      ref: memory://contract_payment_review/index/episode_index.sqlite
+      suggested_main_agent_action: schedule_reconcile
+```
+
+Rules:
+
+- The heartbeat creates a digest and runtime event only.
+- The Main Agent decides whether the digest becomes a user-facing message.
+- The heartbeat cannot activate memory, approve candidates, modify Skills, or change Scenario Packs.
+- Digest findings must reference structured memory records, not raw transcripts.
 
 ## Exception Candidate Record
 
@@ -1230,6 +1306,7 @@ Phase 2:
 - Unicode tokenization, phrase-quoted FTS5 queries, BM25 ranking, and relative score floor.
 - Retention, redaction, and rebuild policies for Episodes.
 - Search only through Context Manager.
+- Memory heartbeat digest for stale candidates, index lag, unresolved approvals, and checkpoint reconciliation lag.
 
 Phase 3:
 
@@ -1239,6 +1316,7 @@ Phase 3:
 - Frozen `MEMORY.md` snapshots generated from approved records.
 - Section-aware context budgeting.
 - Tail preservation and compactable tool-result summaries.
+- Optional hybrid Episode Search policy design, still restricted to redacted process and Episode summaries.
 
 Phase 4:
 
@@ -1295,6 +1373,8 @@ Tests should cover:
 - Context Manager respects memory token budgets and priority order.
 - Context Manager labels injected memory with layer, source ref, allowed use, and confidence.
 - Memory does not override TaskBlackboard, EvaluationResult, Human Gate, or Knowledge Base evidence.
+- Hybrid retrieval tests proving vector results are scoped, redacted, source-linked, budget-clipped, and limited to Episode/process memory summaries.
+- Memory heartbeat tests proving stale candidates, index lag, unresolved approvals, and checkpoint lag create digests without activating memory or changing Skills.
 
 ## Success Criteria
 

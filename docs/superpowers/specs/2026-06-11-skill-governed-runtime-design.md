@@ -617,6 +617,55 @@ Sub-agent permissions should be explicit and deny-by-default:
 
 The runtime should check permissions at dispatch, at every tool call, at every artifact write, and before accepting the final return contract.
 
+### Connector And Plugin Manifest
+
+QwenPaw's plugin manifest pattern is useful for productizing extension points, but PowerBanana should keep extensions subordinate to Scenario Pack policy. A plugin or connector should describe capabilities; it should not be able to mutate the core workflow or bypass ToolGateway.
+
+PowerBanana should separate extension types:
+
+| Type | Purpose | Runtime Boundary |
+|---|---|---|
+| `provider` | Model, embedding, storage, or search backend | Selected by platform config |
+| `tool_connector` | External business system or MCP-style tool server | Always mediated by ToolGateway |
+| `hook` | Runtime hook such as audit export or notification | Deny-by-default, scenario-scoped |
+| `command` | Admin or maintenance command | Requires role policy and audit |
+| `frontend_panel` | Console view for evaluation, approvals, trace, or reports | No direct runtime mutation |
+| `evaluator` | Packaged evaluator implementation | Must bind through Evaluation Contract |
+
+Example:
+
+```yaml
+plugin_id: dingtalk_approval_connector
+version: 0.1.0
+type: tool_connector
+entrypoint: connectors.dingtalk_approval:register
+capabilities:
+  - approval.notify
+  - approval.collect_decision
+required_permissions:
+  - network.external
+  - human_gate.request
+risk_level: medium
+scenario_bindings:
+  allowed_scenarios:
+    - contract_payment_review
+tool_policy_requirements:
+  whitelist:
+    - approval.notify
+  approval_required_for:
+    - approval.collect_decision
+```
+
+Rules:
+
+- Connector manifests are validated before a Scenario Pack can enable them.
+- Scenario Packs may whitelist connector capabilities by exact plugin version and tool name.
+- Frontend extensions can display evaluation cards, Human Gate prompts, candidate proposals, trace views, and report previews, but they cannot directly approve, retry, or alter workflow state without creating a user interaction or governance command.
+- Tool connectors must produce normal ToolGateway call records and are subject to Tool Guard, File Guard, Human Gate, rate limits, and audit.
+- Plugin installation and activation are separate. Installation only makes a connector available; activation requires scenario policy, validation, and approval.
+
+This gives PowerBanana a path to enterprise integrations without turning plugins into ungoverned mini-runtimes.
+
 ### Resource Locks And Concurrency Guard
 
 Parallel dispatch needs explicit resource locks. Locks protect artifact refs, external resources, write tools, and high-risk state.
@@ -677,6 +726,49 @@ Progress rules:
 - `ScenarioCheckpointWriter` is the only component that writes `memory/tasks/<task_id>/progress.md`.
 - Every progress event must include `task_id`, `node_id`, `dispatch_id`, `subagent_id`, `status`, and `written_at`.
 - Progress events must not contain raw source documents or hidden instructions.
+
+### Runtime Event Stream
+
+Progress events are one category of runtime event. PowerBanana should also expose a scoped event stream for operations consoles, trace views, and automated monitoring. The useful lesson from QwenPaw's live plan broadcast is that users and operators need to see work moving, but PowerBanana must add scenario, tenant, task, and role scoping before exposing the stream.
+
+Core event families:
+
+| Event family | Examples |
+|---|---|
+| Main Agent phase | `intake.started`, `scenario.bound`, `plan.frozen`, `task.completed` |
+| Scheduler | `node.ready`, `node.dispatched`, `node.blocked`, `node.retrying`, `node.succeeded` |
+| Sub-agent lifecycle | `subagent.dispatched`, `subagent.waiting_tool`, `subagent.evaluating`, `subagent.failed` |
+| Guard and approval | `guard.flagged`, `approval.requested`, `approval.decided`, `human_gate.waiting` |
+| Evaluation | `evaluation.started`, `evaluation.failed`, `evaluation.repaired`, `goal_judge.blocked` |
+| Candidate proposals | `candidate.recorded`, `candidate.triaged`, `candidate.presented`, `candidate.closed` |
+| Context and checkpoint | `context_bundle.created`, `tool_result.offloaded`, `checkpoint.updated` |
+
+Example:
+
+```yaml
+runtime_event:
+  event_id: evt_001
+  tenant_id: tenant_acme
+  scenario_id: contract_payment_review
+  task_id: task_001
+  event_type: node.blocked
+  source_component: main_agent_scheduler
+  source_ref: scheduler://task_001/nodes/notify_vendor
+  visible_to_roles:
+    - scenario_operator
+    - domain_owner
+  payload_ref: blackboard://task_001/events/evt_001_payload
+  summary: Vendor notification is blocked until Human Gate approval.
+  created_at: 2026-06-12T09:35:00+08:00
+```
+
+Rules:
+
+- Runtime events are append-only and scoped by tenant, scenario, task, and role.
+- Event payloads should store refs to artifacts and guard results instead of embedding large or sensitive content.
+- The event stream is observational. Workflow state changes still happen through scheduler commands, user decisions, approval decisions, or governance commands.
+- A console may subscribe to filtered events, but it cannot infer permission from subscription alone.
+- Dropped UI delivery must not lose the durable audit record.
 
 ### Error, Retry, And Escalation Policy
 
@@ -865,6 +957,80 @@ allowed_skills:
 
 The `local:` prefix always resolves inside the selected scenario directory. The `global:` prefix resolves only from the approved global Skill registry. A Scenario Pack cannot reference another scenario's local Skills.
 
+## Skill Activation Snapshot
+
+PowerBanana should borrow the useful part of QwenPaw's Skill Pool and workspace-copy model: shared Skills are managed in a reusable pool, but runtime execution should use a scenario-scoped activation snapshot instead of reading mutable shared files directly.
+
+The design should distinguish four concepts:
+
+| Layer | Purpose | Mutable During Task |
+|---|---|---|
+| Global Skill Registry | Reviewed reusable Skill templates and handlers | No |
+| Scenario-local Skill Directory | Domain-specific Skills owned by one Scenario Pack | No for enabled versions |
+| Activation Snapshot | Exact Skill files or content-addressed refs pinned for one scenario version | No |
+| Change Draft | Proposed Skill edits created by builders or exception learning | Yes, until approved |
+
+Recommended shape:
+
+```text
+skills/
+  global/
+    summarize_report/
+      SKILL.md
+      manifest.yaml
+      handler.py
+      tests/
+scenario_packs/
+  contract_payment_review/
+    skills/
+      detect_payment_risk/
+        SKILL.md
+        manifest.yaml
+        handler.py
+        tests/
+    runtime/
+      skill_activation.lock.yaml
+      activated_skills/
+        global__summarize_report__0.1.0/
+          SKILL.md
+          manifest.yaml
+          source_ref.yaml
+        local__detect_payment_risk__0.2.0/
+          SKILL.md
+          manifest.yaml
+          source_ref.yaml
+```
+
+`skill_activation.lock.yaml` records the exact runtime Skill set:
+
+```yaml
+scenario_id: contract_payment_review
+scenario_version: 0.3.0
+activated_at: 2026-06-12T09:00:00+08:00
+skills:
+  - activation_id: global__summarize_report__0.1.0
+    source: global:summarize_report@0.1.0
+    source_hash: sha256:...
+    activated_hash: sha256:...
+    activation_mode: copied_snapshot
+  - activation_id: local__detect_payment_risk__0.2.0
+    source: local:detect_payment_risk@0.2.0
+    source_hash: sha256:...
+    activated_hash: sha256:...
+    activation_mode: copied_snapshot
+```
+
+Rules:
+
+- The scheduler resolves executable Skills through the activation snapshot, not through a mutable registry path.
+- Global Skills may be copied or referenced by immutable content hash, but a running scenario must see a stable Skill version.
+- Scenario-local Skills are activated only inside their owning scenario.
+- Importing a Skill with a conflicting name or capability tag creates a review conflict; it must not silently overwrite an existing Skill.
+- A Skill can be disabled for a scenario by changing the next draft Scenario Pack and re-running validation. Running tasks keep their original activation snapshot.
+- External Skill sources, if supported later, must be imported into a draft or activation snapshot and scanned before use. They must not run directly from arbitrary external folders.
+
+This keeps the reuse benefits of a Skill pool while preserving PowerBanana's scenario isolation and replay requirements.
+
 ## Scenario Pack
 
 A Scenario Pack should assemble a business scenario without changing the core runtime.
@@ -1052,6 +1218,72 @@ The guard allows:
 - Writes to scenario checkpoint and memory files only by the dedicated writer role.
 
 This guard is a framework hard constraint. A Skill manifest, Planner output, or Scenario Pack cannot weaken it.
+
+## Runtime Guard Stack And Approval Center
+
+PowerBanana should make QwenPaw's safety layering explicit in the runtime architecture, but adapt it for enterprise scenario isolation. The guard stack should run before dangerous capability is exposed to any Skill, sub-agent, connector, or maintenance assistant.
+
+Guard layers:
+
+| Layer | Checks | Blocking Output |
+|---|---|---|
+| Tool Guard | Tool name, arguments, shell patterns, network target, side-effect category | `tool_guard_result` |
+| File Guard | Scenario root, allowed registry, sensitive paths, path traversal, write target | `file_guard_result` |
+| Skill Scanner | Imported Skill files, manifests, handler metadata, risky instructions, hidden tool requests | `skill_scan_result` |
+| Connector Guard | Plugin manifest, tool whitelist, external endpoint class, credential scope | `connector_guard_result` |
+| Approval Center | Pending decisions for risky calls, rule changes, degraded continuation, external actions | `approval_request` |
+
+Example guard result:
+
+```yaml
+tool_guard_result:
+  result_id: guard_001
+  task_id: task_001
+  scenario_id: contract_payment_review
+  node_id: notify_vendor
+  tool_name: email.send
+  severity: high
+  category: external_side_effect
+  rule_id: external_write_requires_human_gate
+  decision: require_approval
+  remediation: Ask the Main Agent to create a Human Gate request before sending.
+  created_at: 2026-06-12T09:30:00+08:00
+```
+
+Approval requests should be durable and scenario-scoped:
+
+```yaml
+approval_request:
+  approval_id: approval_001
+  task_id: task_001
+  scenario_id: contract_payment_review
+  scenario_version: 0.3.0
+  source_component: tool_guard
+  requester_agent: local:vendor_notice_worker@0.1.0
+  requested_action: email.send
+  risk_level: high
+  evidence_refs:
+    - blackboard://task_001/artifacts/vendor_notice_preview_v1
+  options:
+    - id: approve_once
+      label: Approve this send once.
+    - id: reject
+      label: Reject this send.
+    - id: revise
+      label: Revise the message before deciding.
+  status: pending_main_agent_triage
+```
+
+Approval Center rules:
+
+- The Approval Center stores pending and completed approvals durably; it must not be only in process memory.
+- The Main Agent is the only component that turns an approval request into a user-facing Human Gate prompt.
+- Approval policies can be `strict`, `smart`, `auto_flagged`, or `off`, but production scenarios should not use `off` for high-risk tools or external writes.
+- Guard findings are evidence, not user messages. They enter TaskBlackboard and the event stream; the Main Agent decides how to explain them.
+- A rejected approval writes a decision record and unblocks the scheduler only through a deterministic failure, retry, or alternative path.
+- A scenario can tighten guard policy, but it cannot weaken framework hard-deny rules such as cross-scenario file access or direct credential access.
+
+This turns safety checks into first-class workflow artifacts rather than scattered conditional logic.
 
 ## Scenario Checkpoint Writer
 
@@ -1300,6 +1532,8 @@ agent starts
 -> compile Evaluation Contract
 -> write Evaluation Contract under that scenario directory
 -> generate golden and calibration drafts under that scenario directory
+-> scan imported Skills and connector manifests
+-> create skill_activation.lock.yaml for approved Skill versions
 -> request domain-owner or administrator approval
 -> enable approved pack and pin active version
 ```
@@ -1351,6 +1585,57 @@ Versioning rules:
 
 The LLM may help collect the change, explain the diff, and suggest affected tests. It must not directly activate the change or bypass linting, calibration, approval, or version pinning.
 
+## Scenario Heartbeat And Governance Maintenance
+
+PowerBanana can borrow QwenPaw's heartbeat idea, but it should use it as a scenario-governance maintenance loop rather than a personal assistant check-in. A heartbeat is a scheduled Main Agent review of scenario state. It detects stale or risky workflow conditions and creates structured records; it does not autonomously perform high-risk actions.
+
+Heartbeat checks may include:
+
+- Pending Human Gates older than the scenario SLA.
+- Approval requests waiting for Main Agent triage.
+- Candidate proposal records close to TTL expiry.
+- Repeated evaluator failures that meet exception-learning thresholds.
+- Failed or stuck DAG nodes with exhausted retry budgets.
+- Scenario Pack drafts that passed lint but still wait for owner approval.
+- Activated Skill snapshots whose source version has been deprecated.
+- Event stream gaps or checkpoint reconciliation lag.
+
+Example:
+
+```yaml
+scenario_heartbeat_policy:
+  enabled: true
+  interval_minutes: 60
+  active_hours:
+    timezone: Asia/Shanghai
+    start: "09:00"
+    end: "18:00"
+  checks:
+    - pending_human_gates
+    - stale_approval_requests
+    - expiring_candidate_proposals
+    - repeated_evaluation_failures
+    - checkpoint_reconciliation_lag
+  allowed_actions:
+    - create_progress_event
+    - create_candidate_summary
+    - ask_main_agent_to_notify_user
+  denied_actions:
+    - approve_request
+    - reject_request
+    - modify_enabled_skill
+    - modify_enabled_scenario_pack
+    - call_external_write_tool
+```
+
+Rules:
+
+- Heartbeat output is routed to the Main Agent as a governance digest.
+- The Main Agent decides whether to notify the user, batch the digest, or leave it as an internal record.
+- Heartbeat cannot directly approve, reject, retry, or modify runtime behavior.
+- Heartbeat summaries must use refs to approvals, evaluations, candidates, and events rather than raw transcripts.
+- Each Scenario Pack can define its own SLA thresholds, but framework hard gates still apply.
+
 ## Runtime Task Flow
 
 Once a Scenario Pack is enabled, normal task execution should follow this governed loop:
@@ -1361,13 +1646,16 @@ user request
 -> Main Agent asks Scenario Router to select one enabled scenario
 -> Main Agent binds scenario_id, scenario_version, evaluation_contract_version
 -> Main Agent activates ScenarioPathGuard for the pinned scenario root
+-> Main Agent loads the scenario skill_activation.lock.yaml and connector policy
 -> Main Agent asks ScenarioContextManager for the initial context bundle
 -> Main Agent asks Planner for a candidate plan or DAG
--> Main Agent runs SkillPolicyValidator, SubAgentPolicyValidator, and PlanValidator
+-> Main Agent runs SkillPolicyValidator, SubAgentPolicyValidator, ConnectorPolicyValidator, and PlanValidator
 -> Main Agent freezes the executable plan
 -> MainAgent Scheduler dispatches ready nodes
--> sub-agents execute Skills through ToolGateway under dispatch contracts
+-> sub-agents execute activated Skills through ToolGateway under dispatch contracts
+-> Tool Guard, File Guard, Skill Scanner, Connector Guard, and Approval Center mediate risky operations
 -> Skill and sub-agent outputs write artifacts to TaskBlackboard
+-> Runtime Event Stream records phase, scheduler, guard, approval, evaluation, and checkpoint events
 -> sub-agent suggestions are written as candidate proposal records
 -> Main Agent triages candidate proposals by risk, priority, evidence, duplication, escalation, and TTL policy
 -> ScenarioCheckpointWriter records progress and state
@@ -1514,6 +1802,14 @@ The Planner may choose Skills, but it only creates candidates. Before execution,
 30. Candidate proposal records have evidence refs, source refs, scenario scope, priority, risk level, lifecycle status, TTL, and allowed `candidate.create` permissions.
 31. Candidate triage policy covers mandatory escalation, suppression reasons, deduplication, batching, and expiry.
 32. Golden and calibration case requirements are satisfied for enabled scenarios.
+33. The selected Scenario Pack has a valid `skill_activation.lock.yaml` or equivalent immutable activation record.
+34. Activated Skill hashes match the approved global or scenario-local source versions.
+35. Imported or updated Skills have passing Skill Scanner results before activation.
+36. Connector and plugin manifests are versioned, allowed by scenario policy, and bound to ToolGateway permissions.
+37. Tool Guard, File Guard, Skill Scanner, and Connector Guard policies are loaded for the selected scenario.
+38. Any operation that may require approval has an Approval Center route and a Main Agent Human Gate presentation path.
+39. Runtime Event Stream scope includes tenant, scenario, task, role visibility, and durable audit refs.
+40. Scenario heartbeat policy, if enabled, is limited to governance digests and cannot mutate runtime behavior directly.
 
 Only a passing candidate becomes a frozen executable plan.
 
@@ -1528,6 +1824,10 @@ Framework hard constraints:
 - The Main Agent is the only component allowed to communicate with the user.
 - User-facing questions, approvals, progress reports, and candidate choices must be represented as interaction records before they affect execution.
 - All tools go through ToolGateway.
+- All enabled Skills execute from an approved activation snapshot or immutable content-addressed ref.
+- Imported Skills and connector manifests pass scanner and policy validation before activation.
+- Tool Guard, File Guard, Skill Scanner, and Connector Guard run before risky capability is exposed.
+- Approval Center is the durable source of pending and completed approval decisions.
 - All executable plans go through PlanValidator.
 - All Skill calls are scheduled by the MainAgent Scheduler and Executor.
 - All sub-agent calls are created by the MainAgent Scheduler from a validated dispatch contract.
@@ -1555,6 +1855,8 @@ Framework hard constraints:
 - Candidate proposal records that are suppressed, deferred, merged, expired, or rejected require a recorded reason.
 - Mandatory-escalation candidates cannot be silently suppressed.
 - ScenarioDream and ScenarioDistill can create draft candidates only; they cannot enable runtime policy.
+- Runtime events are observational and append-only; they cannot directly mutate workflow state.
+- Scenario heartbeat can create governance digests only; it cannot approve, reject, retry, or edit enabled assets.
 
 Skill-declared constraints:
 
@@ -1701,8 +2003,14 @@ Before treating this as a production multi-industry platform, the following comp
 20. Tenant, role, data-classification, and credential-isolation model.
 21. Observability for main-agent phase transitions, user interactions, candidate proposals, scheduler transitions, sub-agent lifecycle transitions, tool calls, context bundle generation, checkpoint updates, evaluation outcomes, goal-judge verdicts, and human gates.
 22. Release and rollback process for Scenario Packs, Skill versions, Sub-Agent versions, and Evaluation Contracts.
+23. Skill activation snapshot registry with hash verification, conflict-safe imports, and scenario-version pinning.
+24. Runtime guard stack covering Tool Guard, File Guard, Skill Scanner, Connector Guard, and scenario guard policies.
+25. Durable Approval Center with Main Agent presentation, decision records, expiry, retries, and audit.
+26. Connector and plugin manifest schema with extension type boundaries and scenario-level whitelisting.
+27. Runtime Event Stream with tenant, scenario, task, role scoping and durable audit refs.
+28. Scenario Heartbeat for stale Human Gates, approval requests, candidate TTLs, repeated failures, deprecated Skill snapshots, and checkpoint lag.
 
-For near-term implementation, the first platform investments should be Scenario Pack schema/linting, Skill and Sub-Agent manifests with policy validation, a Main Agent run controller, deterministic MainAgent Scheduler, dispatch and return contract validation, ScenarioPathGuard, a minimal ScenarioCheckpointWriter, a baseline ScenarioContextManager for task start and resume, a unified interaction record model, and a candidate triage policy.
+For near-term implementation, the first platform investments should be Scenario Pack schema/linting, Skill and Sub-Agent manifests with policy validation, Skill activation snapshots, a Main Agent run controller, deterministic MainAgent Scheduler, dispatch and return contract validation, ScenarioPathGuard, a minimal guard stack, a durable Approval Center, a minimal ScenarioCheckpointWriter, a baseline ScenarioContextManager for task start and resume, a unified interaction record model, candidate triage policy, and a scoped runtime event stream.
 
 ## Migration Plan
 
@@ -1749,6 +2057,12 @@ PowerBanana should migrate incrementally.
 39. Add ScenarioDream for repeated exception summarization and process memory.
 40. Add ScenarioDistill for user-confirmed, draft-only Skill, evaluator, golden case, and calibration case candidates.
 41. Expand golden cases to assert selected Skills, selected sub-agents, required evaluators, dispatch contracts, return contracts, main-agent phase transitions, user interaction records, candidate proposal records, candidate triage decisions, scheduler transitions, resource locks, path-guard decisions, context bundle contents, checkpoint updates, exception-learning prompts, goal-judge verdicts, and policy gates.
+42. Add Skill activation snapshots so enabled scenarios execute pinned Skill versions rather than mutable registry files.
+43. Add Skill Scanner for imported, generated, or changed Skills before activation.
+44. Add connector and plugin manifest validation, with scenario-level tool whitelists and frontend extension boundaries.
+45. Add Tool Guard, File Guard, Connector Guard, and a durable Approval Center before enabling external write tools.
+46. Add a scoped Runtime Event Stream for main-agent phases, scheduler state, guard findings, approvals, evaluations, candidate proposals, context bundles, and checkpoint updates.
+47. Add Scenario Heartbeat as a read-only governance digest for stale approvals, pending gates, candidate TTLs, repeated failures, deprecated activation snapshots, and checkpoint lag.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -1774,6 +2088,9 @@ Tests should cover:
 - Acceptance of approved `global:` sub-agent references by exact version.
 - Skill promotion tests proving local Skills cannot become global without review, versioning, tests, and approval.
 - Sub-agent promotion tests proving local sub-agents cannot become global without review, versioning, tests, and approval.
+- Skill activation snapshot tests proving enabled scenarios execute pinned Skill versions and reject hash drift.
+- Conflict-safe Skill import tests proving imported Skills cannot silently overwrite existing global or scenario-local Skills.
+- Skill Scanner tests for imported, generated, and changed Skill files before activation.
 - Rejection of unknown or disabled Skills.
 - Rejection of unknown or disabled sub-agents.
 - Rejection of Skills that request unauthorized tools.
@@ -1798,8 +2115,13 @@ Tests should cover:
 - Dispatch contract tests rejecting missing input refs, stale refs, unevaluated refs, out-of-scope refs, and missing evaluator bindings.
 - Return contract tests rejecting inline business claims without artifact refs, wrong status values, missing evaluation targets, and malformed exact values.
 - Permission model tests for ToolGateway calls, Blackboard reads, Blackboard writes, memory reads, memory writes, Human Gate requests, and candidate creation.
+- Tool Guard tests for dangerous commands, external side effects, network targets, denied tools, and approval-required tools.
+- File Guard tests for scenario root enforcement, approved registry reads, path traversal, sensitive paths, and write targets.
+- Connector Guard tests proving plugin manifests cannot enable undeclared tools, credentials, endpoints, or frontend mutations.
+- Durable Approval Center tests for pending requests, decisions, expiry, rejection, retry routing, and Main Agent-only user presentation.
 - Resource lock tests for shared read locks, exclusive write locks, lock conflicts, fan-in waits, timeout release, and cancellation release.
 - Progress event schema tests for append-only events, required fields, freshness metadata, and ScenarioCheckpointWriter materialization.
+- Runtime Event Stream tests for tenant, scenario, task, role scope, append-only delivery, durable payload refs, and non-mutating semantics.
 - Error, retry, and escalation tests for transient tool errors, permission denials, schema-invalid outputs, repairable evaluations, blocking evaluations, unsafe outputs, timeouts, incompatible context bundles, and Human Gate pauses.
 - Evaluation binding tests proving downstream nodes cannot consume sub-agent output without passing evaluation, allowed-partial evaluation, candidate-only policy, or Human Gate approval.
 - Sub-agent audit tests proving dispatch IDs, context bundle hashes, input refs, output refs, tool call refs, evaluator refs, timing, token usage, and final status are recorded.
@@ -1819,6 +2141,7 @@ Tests should cover:
 - Runtime tests that skip builders and load only active enabled versions.
 - Rule maintenance tests that create new draft versions, show diffs, rerun affected golden and calibration cases, and require approval before activation.
 - Version pinning tests proving running tasks keep their original Scenario Pack and Evaluation Contract versions.
+- Scenario Heartbeat tests proving stale Human Gates, approval requests, candidate TTLs, repeated failures, deprecated Skill snapshots, and checkpoint lag create governance digests without mutating workflow state.
 - Scenario isolation tests proving data-analysis tasks cannot load contract-review plans, policies, evaluators, or test cases.
 - Golden cases that verify selected Scenario Pack, Skill chain, scheduler trace, evaluation gates, and final answer.
 
@@ -1828,9 +2151,11 @@ This design does not introduce:
 
 - Free-form LLM planning.
 - Arbitrary plugin execution.
+- Direct execution from mutable shared Skill pools.
+- Direct sub-agent or plugin communication with the user.
 - Direct Skill access to credentials, raw full Blackboard, or full Memory.
 - Write-back tools in Phase 1.
-- Multi-tenant permission enforcement.
+- Full production multi-tenant permission enforcement in Phase 1.
 - Distributed worker infrastructure.
 - Unbounded autonomous loops.
 
