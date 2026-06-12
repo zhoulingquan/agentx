@@ -103,6 +103,7 @@ Rules:
 - Sub-agents, Skills, evaluators, ScenarioCheckpointWriter, ScenarioDream, and ScenarioDistill must not message the user directly.
 - Any component that needs user input must create a structured request or candidate record in TaskBlackboard.
 - The Main Agent decides whether to ask the user immediately, batch related questions, defer the question, or resolve it through existing policy.
+- The Main Agent must triage candidate proposal records before presenting them, using priority, risk, escalation, duplication, and expiry policies.
 - User-facing messages must be assembled by the Main Agent from evaluated artifacts, blocking records, progress events, Human Gate requests, and candidate proposal records.
 - The user can ask the Main Agent for the current plan, running nodes, sub-agent status, evaluation failures, pending decisions, candidate proposals, or why the workflow is blocked.
 - The Main Agent should expose internal state as explanations and references, not as raw sub-agent transcripts.
@@ -491,6 +492,9 @@ candidate_proposal_record:
   source_subagent_id: local:payment_risk_worker@0.1.0
   scenario_id: contract_payment_review
   candidate_type: repeated_exception
+  risk_level: low
+  priority: medium
+  dedupe_key: contract_payment_review:appendix_payment_terms
   title: Payment terms often appear in appendices.
   summary: The worker found payment terms in an appendix after the main body appeared incomplete.
   rationale: This pattern may deserve a dedicated appendix-check Skill or a scenario rule.
@@ -504,9 +508,15 @@ candidate_proposal_record:
     - add_golden_case
     - ignore
   user_question: Should this pattern become part of the scenario workflow?
-  priority: medium
+  mandatory_escalation: false
+  escalation_reasons: []
+  presentation_policy:
+    default_action: batch_for_later
+    max_defer_hours: 24
   status: recorded
+  status_reason: awaiting_main_agent_triage
   created_at: 2026-06-11T10:04:00+08:00
+  expires_at: 2026-07-11T10:04:00+08:00
 ```
 
 Candidate proposal rules:
@@ -516,8 +526,77 @@ Candidate proposal rules:
 - A candidate must include evidence refs or tool call refs; unsupported suggestions are rejected or marked low-confidence.
 - A candidate is not a user prompt until the Main Agent chooses to present it.
 - The Main Agent may merge duplicate candidates, suppress low-value candidates, or batch related candidates into one user interaction.
+- The Main Agent must record triage decisions even when a candidate is not shown to the user.
 - User decisions about candidates are stored as `user_decision_record` entries and linked back to the candidate IDs.
 - Accepted candidates create drafts or change requests only; they never directly modify enabled Skills, Scenario Packs, Evaluation Packs, Memory, or ToolGateway policy.
+
+Candidate lifecycle:
+
+```text
+recorded
+-> triaged
+-> presented
+-> decided
+-> draft_created
+-> closed
+```
+
+Alternative terminal or side states:
+
+```text
+recorded -> rejected_low_confidence
+triaged -> merged
+triaged -> deferred
+triaged -> suppressed
+triaged -> expired
+presented -> user_declined
+decided -> change_request_created
+```
+
+Status rules:
+
+- `recorded` means the sub-agent created the candidate and no Main Agent triage has happened yet.
+- `triaged` means the Main Agent reviewed priority, risk, evidence quality, duplication, expiry, and escalation rules.
+- `presented` means the Main Agent created a `user_interaction_record` for the candidate.
+- `deferred`, `suppressed`, `merged`, `expired`, and `rejected_low_confidence` require a `status_reason`.
+- `decided` requires a linked `user_decision_record` or governance decision record.
+- `draft_created` requires a linked draft, change request, or ScenarioDistill artifact.
+- `closed` requires a closure reason.
+
+Mandatory escalation rules:
+
+- A candidate with `risk_level: high` cannot be silently suppressed.
+- A candidate that reports possible unsafe output, external side effects, policy bypass, data leakage, cross-scenario contamination, blocking evaluator failure, or missing evidence for a final claim must be routed to Human Gate or user-facing review.
+- A candidate that changes enabled runtime behavior must become a draft change request and pass linting, golden cases, calibration cases, and approval.
+- A candidate that only improves convenience, wording, or low-risk workflow ergonomics may be batched, deferred, or suppressed by policy.
+
+Triage policy:
+
+```yaml
+candidate_triage_policy:
+  batch_low_risk_candidates: true
+  max_batch_size: 5
+  max_defer_hours: 24
+  default_ttl_days: 30
+  require_suppression_reason: true
+  force_user_review_for:
+    - high_risk
+    - unsafe_output
+    - external_side_effect
+    - policy_bypass
+    - data_leakage
+    - cross_scenario_contamination
+    - blocking_evaluation
+    - final_claim_missing_evidence
+  dedupe:
+    key_fields:
+      - scenario_id
+      - candidate_type
+      - dedupe_key
+    action: merge_and_increment_occurrence_count
+```
+
+This keeps the Blackboard useful instead of turning it into an unbounded suggestion queue.
 
 ### Permission Model
 
@@ -1290,6 +1369,7 @@ user request
 -> sub-agents execute Skills through ToolGateway under dispatch contracts
 -> Skill and sub-agent outputs write artifacts to TaskBlackboard
 -> sub-agent suggestions are written as candidate proposal records
+-> Main Agent triages candidate proposals by risk, priority, evidence, duplication, escalation, and TTL policy
 -> ScenarioCheckpointWriter records progress and state
 -> Main Agent triggers EvaluationRunner for node outputs and fan-in
 -> Main Agent routes blocking or high-risk outcomes to Human Gate
@@ -1431,8 +1511,9 @@ The Planner may choose Skills, but it only creates candidates. Before execution,
 27. Merge Policy covers any fan-in node or shared logical artifact.
 28. ScenarioCheckpointWriter permissions are available for long-running or autonomous tasks.
 29. User-facing interactions are routed through the Main Agent's unified interaction gateway.
-30. Candidate proposal records have evidence refs, source refs, scenario scope, and allowed `candidate.create` permissions.
-31. Golden and calibration case requirements are satisfied for enabled scenarios.
+30. Candidate proposal records have evidence refs, source refs, scenario scope, priority, risk level, lifecycle status, TTL, and allowed `candidate.create` permissions.
+31. Candidate triage policy covers mandatory escalation, suppression reasons, deduplication, batching, and expiry.
+32. Golden and calibration case requirements are satisfied for enabled scenarios.
 
 Only a passing candidate becomes a frozen executable plan.
 
@@ -1471,6 +1552,8 @@ Framework hard constraints:
 - Fan-in nodes can read only authorized Blackboard refs and evaluation results.
 - Downstream nodes cannot consume sub-agent outputs unless EvaluationResult, candidate-only policy, or Human Gate permits it.
 - Candidate proposal records are not instructions until the Main Agent presents them and a user or governance decision accepts them.
+- Candidate proposal records that are suppressed, deferred, merged, expired, or rejected require a recorded reason.
+- Mandatory-escalation candidates cannot be silently suppressed.
 - ScenarioDream and ScenarioDistill can create draft candidates only; they cannot enable runtime policy.
 
 Skill-declared constraints:
@@ -1611,7 +1694,7 @@ Before treating this as a production multi-industry platform, the following comp
 13. ScenarioCheckpointWriter with checkpoint, memory, notes, and task progress ownership.
 14. ScenarioContextManager with Scenario Context Bundle compilation, active recall protocol, and section-aware budgets.
 15. Unified User Interaction Gateway with interaction records, user decision records, and one Main Agent conversational surface.
-16. Candidate proposal store for sub-agent suggestions, evidence refs, source refs, deduplication, batching, and user decision linkage.
+16. Candidate proposal store for sub-agent suggestions, evidence refs, source refs, lifecycle states, deduplication, batching, TTL, suppression reasons, mandatory escalation, and user decision linkage.
 17. GoalJudgeEvaluator for task-level stop conditions.
 18. Exception Learning Assistant backed by ScenarioDream and ScenarioDistill draft-only flows.
 19. Sub-agent audit store for dispatches, context bundle hashes, tool calls, outputs, evaluator results, and terminal states.
@@ -1619,7 +1702,7 @@ Before treating this as a production multi-industry platform, the following comp
 21. Observability for main-agent phase transitions, user interactions, candidate proposals, scheduler transitions, sub-agent lifecycle transitions, tool calls, context bundle generation, checkpoint updates, evaluation outcomes, goal-judge verdicts, and human gates.
 22. Release and rollback process for Scenario Packs, Skill versions, Sub-Agent versions, and Evaluation Contracts.
 
-For near-term implementation, the first platform investments should be Scenario Pack schema/linting, Skill and Sub-Agent manifests with policy validation, a Main Agent run controller, deterministic MainAgent Scheduler, dispatch and return contract validation, ScenarioPathGuard, a minimal ScenarioCheckpointWriter, a baseline ScenarioContextManager for task start and resume, and a unified interaction record model.
+For near-term implementation, the first platform investments should be Scenario Pack schema/linting, Skill and Sub-Agent manifests with policy validation, a Main Agent run controller, deterministic MainAgent Scheduler, dispatch and return contract validation, ScenarioPathGuard, a minimal ScenarioCheckpointWriter, a baseline ScenarioContextManager for task start and resume, a unified interaction record model, and a candidate triage policy.
 
 ## Migration Plan
 
@@ -1640,31 +1723,32 @@ PowerBanana should migrate incrementally.
 13. Add a Unified User Interaction Gateway so all user-facing questions, reports, approvals, and candidate choices are routed through the Main Agent.
 14. Add interaction records and user decision records before user responses can affect execution.
 15. Add candidate proposal records for sub-agent suggestions, with evidence refs, source refs, status, and user-decision linkage.
-16. Introduce a scheduler state model for `pending`, `ready`, `running`, `succeeded`, `failed`, `skipped`, `blocked`, and `needs_human_gate`.
-17. Add sub-agent lifecycle state tracking for `dispatching`, `waiting_tool`, `waiting_human`, `evaluating`, `timed_out`, and `cancelled`.
-18. Replace the linear TaskDagExecutor loop with ready-node scheduling while keeping default concurrency at 1.
-19. Add sub-agent dispatch and return contract schemas, then validate them before and after every delegated run.
-20. Add Scenario Pack `concurrency_policy` and enforce it before dispatch.
-21. Add resource lock declaration and acquisition before parallel dispatch.
-22. Add merge and fan-in validation for aggregate nodes.
-23. Add progress event schema and ScenarioCheckpointWriter reconciliation from task-local events.
-24. Add sub-agent audit records for dispatches, context bundle hashes, tool calls, artifacts, evaluator results, and terminal states.
-25. Enable parallel execution first for low-risk read-only Skills and sub-agents.
-26. Add one non-data-analysis Scenario Pack, such as contract review or ticket triage, to validate cross-industry reuse.
-27. Add first-run Agent initialization that launches the Scenario and Evaluation builders when no enabled Scenario Pack exists.
-28. Add rule maintenance change requests that create new draft pack versions instead of editing enabled packs in place.
-29. Add one user-friendly builder path that collects both scenario requirements and evaluation requirements through guided questions.
-30. Add scenario directory isolation checks for file resolution and cross-scenario references.
-31. Add global and scenario-local Skill registries with explicit `global:` and `local:` resolution.
-32. Add global and scenario-local sub-agent registries with explicit `global:` and `local:` resolution.
-33. Add a promotion path for turning a scenario-local Skill or sub-agent into a reviewed global asset.
-34. Add ScenarioPathGuard for scenario file reads and writes.
-35. Add ScenarioCheckpointWriter with scenario-local checkpoint and memory templates.
-36. Add ScenarioContextManager with Scenario Context Bundle generation, active recall protocol, and context budgets.
-37. Add GoalJudgeEvaluator as a task-level stop-condition gate.
-38. Add ScenarioDream for repeated exception summarization and process memory.
-39. Add ScenarioDistill for user-confirmed, draft-only Skill, evaluator, golden case, and calibration case candidates.
-40. Expand golden cases to assert selected Skills, selected sub-agents, required evaluators, dispatch contracts, return contracts, main-agent phase transitions, user interaction records, candidate proposal records, scheduler transitions, resource locks, path-guard decisions, context bundle contents, checkpoint updates, exception-learning prompts, goal-judge verdicts, and policy gates.
+16. Add candidate lifecycle, triage policy, mandatory escalation rules, deduplication, TTL, suppression reasons, and archival behavior.
+17. Introduce a scheduler state model for `pending`, `ready`, `running`, `succeeded`, `failed`, `skipped`, `blocked`, and `needs_human_gate`.
+18. Add sub-agent lifecycle state tracking for `dispatching`, `waiting_tool`, `waiting_human`, `evaluating`, `timed_out`, and `cancelled`.
+19. Replace the linear TaskDagExecutor loop with ready-node scheduling while keeping default concurrency at 1.
+20. Add sub-agent dispatch and return contract schemas, then validate them before and after every delegated run.
+21. Add Scenario Pack `concurrency_policy` and enforce it before dispatch.
+22. Add resource lock declaration and acquisition before parallel dispatch.
+23. Add merge and fan-in validation for aggregate nodes.
+24. Add progress event schema and ScenarioCheckpointWriter reconciliation from task-local events.
+25. Add sub-agent audit records for dispatches, context bundle hashes, tool calls, artifacts, evaluator results, and terminal states.
+26. Enable parallel execution first for low-risk read-only Skills and sub-agents.
+27. Add one non-data-analysis Scenario Pack, such as contract review or ticket triage, to validate cross-industry reuse.
+28. Add first-run Agent initialization that launches the Scenario and Evaluation builders when no enabled Scenario Pack exists.
+29. Add rule maintenance change requests that create new draft pack versions instead of editing enabled packs in place.
+30. Add one user-friendly builder path that collects both scenario requirements and evaluation requirements through guided questions.
+31. Add scenario directory isolation checks for file resolution and cross-scenario references.
+32. Add global and scenario-local Skill registries with explicit `global:` and `local:` resolution.
+33. Add global and scenario-local sub-agent registries with explicit `global:` and `local:` resolution.
+34. Add a promotion path for turning a scenario-local Skill or sub-agent into a reviewed global asset.
+35. Add ScenarioPathGuard for scenario file reads and writes.
+36. Add ScenarioCheckpointWriter with scenario-local checkpoint and memory templates.
+37. Add ScenarioContextManager with Scenario Context Bundle generation, active recall protocol, and context budgets.
+38. Add GoalJudgeEvaluator as a task-level stop-condition gate.
+39. Add ScenarioDream for repeated exception summarization and process memory.
+40. Add ScenarioDistill for user-confirmed, draft-only Skill, evaluator, golden case, and calibration case candidates.
+41. Expand golden cases to assert selected Skills, selected sub-agents, required evaluators, dispatch contracts, return contracts, main-agent phase transitions, user interaction records, candidate proposal records, candidate triage decisions, scheduler transitions, resource locks, path-guard decisions, context bundle contents, checkpoint updates, exception-learning prompts, goal-judge verdicts, and policy gates.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -1705,6 +1789,9 @@ Tests should cover:
 - Unified User Interaction Gateway tests proving only the Main Agent can create user-facing prompts, progress reports, approvals, and candidate-choice messages.
 - User interaction record tests proving every execution-changing user response links to an interaction record, source refs, chosen option, and runtime effect.
 - Candidate proposal record tests proving sub-agent suggestions include source sub-agent, dispatch ID, scenario scope, evidence refs, status, and allowed `candidate.create` permission.
+- Candidate lifecycle tests for `recorded`, `triaged`, `presented`, `decided`, `draft_created`, `closed`, `rejected_low_confidence`, `merged`, `deferred`, `suppressed`, `expired`, and `user_declined` states.
+- Mandatory escalation tests proving high-risk, unsafe output, external side-effect, policy-bypass, data-leakage, cross-scenario contamination, blocking-evaluation, and final-claim-missing-evidence candidates cannot be silently suppressed.
+- Candidate queue control tests for deduplication, batch presentation, TTL expiry, archival, suppression reasons, and occurrence counting.
 - Candidate presentation tests proving the Main Agent can batch, deduplicate, defer, suppress, or present sub-agent candidate proposals without exposing raw sub-agent transcripts.
 - Scheduler tests for ready-node selection, dependency blocking, retry limits, timeout handling, and Human Gate blocking.
 - Sub-agent lifecycle tests for dispatching, running, waiting-tool, waiting-human, evaluating, succeeded, failed, timed-out, cancelled, and retrying states.

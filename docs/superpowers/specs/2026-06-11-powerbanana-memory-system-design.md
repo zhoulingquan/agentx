@@ -350,7 +350,7 @@ Stores:
 - Proposed Skill, evaluator, golden case, calibration case, and process memory drafts.
 - User decisions and suppression records.
 
-Sub-agent candidate proposals start as task-local TaskBlackboard records. They enter the Evolution Memory Loop only when the Main Agent decides to present them through the unified user interaction gateway or a governance flow accepts them as durable candidates.
+Sub-agent candidate proposals start as task-local TaskBlackboard records. They enter the Evolution Memory Loop only when the Main Agent triages them, decides to present them through the unified user interaction gateway, or a governance flow accepts them as durable candidates.
 
 Lifecycle:
 
@@ -358,6 +358,7 @@ Lifecycle:
 episode signals
 -> repeated pattern detected
 -> candidate created
+-> main-agent triage
 -> user asked in business language
 -> draft generated
 -> lint and replay
@@ -373,6 +374,8 @@ Rules:
 - User confirmation creates only a draft.
 - Drafts do not influence normal runtime until validation and approval finish.
 - Evolution outputs remain scenario-local unless promoted through multi-scenario evidence and review.
+- Unpresented task-local candidate proposals expire or archive according to scenario policy.
+- Suppressed, merged, expired, or rejected candidates keep their reason and evidence refs for audit.
 
 ## Directory Shape
 
