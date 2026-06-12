@@ -350,6 +350,8 @@ Stores:
 - Proposed Skill, evaluator, golden case, calibration case, and process memory drafts.
 - User decisions and suppression records.
 
+Sub-agent candidate proposals start as task-local TaskBlackboard records. They enter the Evolution Memory Loop only when the Main Agent decides to present them through the unified user interaction gateway or a governance flow accepts them as durable candidates.
+
 Lifecycle:
 
 ```text
@@ -621,7 +623,7 @@ Reconciliation rules:
 - Integrate status, blockers, artifact refs, and exact-form values into checkpoint sections.
 - Preserve exact-form values byte-for-byte when they are needed for replay or evaluator matching.
 - Do not let sub-agent progress write directly into `MEMORY.md` or Long-Term Governed Memory.
-- If a sub-agent progress item suggests a durable lesson, record it as a candidate for Episode or process memory promotion.
+- If a sub-agent progress item suggests a durable lesson, record it first as a task-local candidate proposal; the Main Agent decides whether it should become an Episode or process memory candidate.
 - If progress is missing or malformed, mark the node as requiring recovery rather than inventing state.
 
 ## MemoryPathGuard
