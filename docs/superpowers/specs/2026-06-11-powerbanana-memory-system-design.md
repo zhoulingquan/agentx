@@ -584,7 +584,7 @@ It must not:
 
 ### Sub-Agent Progress Reconciliation
 
-PowerBanana should borrow MiMo-Code's progress reconciliation pattern for parallel work, but keep stricter write ownership. Sub-agents report task-local progress through TaskBlackboard or a task-local progress event. `ScenarioCheckpointWriter` is the component that materializes those reports into `memory/tasks/<task_id>/progress.md` and reconciles them into the scenario checkpoint.
+PowerBanana should borrow MiMo-Code's progress reconciliation pattern for parallel work, but keep stricter write ownership. Sub-agents report task-local progress through TaskBlackboard or a task-local progress event. The progress event shape is defined by the Sub-Agent Runtime Contract; this section defines how those events are materialized into memory-owned files. `ScenarioCheckpointWriter` is the component that materializes those reports into `memory/tasks/<task_id>/progress.md` and reconciles them into the scenario checkpoint.
 
 Each writer-created progress file should include machine-readable freshness metadata:
 

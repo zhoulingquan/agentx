@@ -72,6 +72,28 @@ flowchart TD
 
 The framework owns routing, path guarding, validation, execution, checkpointing, blackboard writes, tool mediation, evaluation aggregation, goal judgment, human gates, and final reporting. Scenario Packs and Skills provide declarative capabilities and constraints.
 
+## Main Agent Workflow Ownership
+
+The Main Agent is the owner of the whole task run. It should control the end-to-end workflow from user intent intake to final answer, while delegating bounded work to specialized components.
+
+The Main Agent owns these workflow phases:
+
+1. Intake: capture user intent, attachments, task boundaries, risk level, and whether the request is initialization, normal execution, or rule maintenance.
+2. Scenario binding: route to one enabled Scenario Pack, pin `scenario_id`, `scenario_version`, `evaluation_contract_version`, and `scenario_root`.
+3. Context setup: ask `ScenarioContextManager` for a purpose-specific bundle and reject context that violates scenario, task, or memory-layer boundaries.
+4. Planning: request candidate plans from Planner, but keep them as candidates until validation passes.
+5. Validation: require Skill, Sub-Agent, Scenario, Evaluation, ToolGateway, Human Gate, resource-lock, and path-guard validation before freezing a plan.
+6. Scheduling: advance the frozen DAG, dispatch ready nodes, track state transitions, and enforce concurrency.
+7. Delegation: dispatch sub-agents through structured contracts and prevent direct sub-agent-to-sub-agent orchestration.
+8. Evidence control: require every material output to land in TaskBlackboard with artifact refs, versions, and traceability.
+9. Evaluation control: trigger required evaluators, interpret blocking or partial results, and prevent unevaluated outputs from entering downstream nodes.
+10. Human Gate control: pause, resume, or redirect workflow around user or reviewer decisions.
+11. Memory and checkpoint control: notify `ScenarioCheckpointWriter`, but never let ordinary agents write checkpoint-owned files directly.
+12. Completion control: require `GoalJudgeEvaluator` before autonomous completion and assemble final responses only from evaluated artifacts.
+13. Learning control: route repeated exceptions into draft-only ScenarioDream or ScenarioDistill proposals, never directly into enabled Skills or policy.
+
+This means Planner, sub-agents, evaluators, memory writers, and learning assistants are all subordinate workflow participants. They can propose, execute, evaluate, or summarize within their contracts, but the Main Agent remains responsible for deciding what phase the workflow is in, what can run next, what must pause, and what is allowed to become final.
+
 ## Main Agent Scheduler
 
 The Main Agent should be a deterministic scheduler, not a free-running executor. It may use a Planner to produce candidate DAGs and Skill chains, but only the scheduler advances frozen work.
@@ -109,9 +131,11 @@ Parallelism should be DAG-driven. The scheduler can run multiple nodes from the 
 2. Their required input refs are available in TaskBlackboard.
 3. Their Scenario Pack allows parallel execution.
 4. Their Skill manifests allow concurrent execution.
-5. ToolGateway rate limits and risk policy allow the tool calls.
-6. Human Gate is not pending for a required upstream decision.
-7. The target artifacts do not conflict, or a merge policy is declared.
+5. Their Sub-Agent manifests allow concurrent dispatch for the selected runtime mode.
+6. ToolGateway rate limits and risk policy allow the tool calls.
+7. Human Gate is not pending for a required upstream decision.
+8. Required resource locks can be acquired.
+9. The target artifacts do not conflict, or a merge policy is declared.
 
 Example parallel shape:
 
@@ -134,10 +158,13 @@ Example:
 ```yaml
 concurrency_policy:
   max_parallel_sub_agents: 4
+  max_parallel_same_role: 2
   max_parallel_skill_steps: 4
   max_parallel_tool_calls: 2
   max_parallel_high_risk_nodes: 0
   allow_parallel_candidate_reads: false
+  require_resource_locks: true
+  on_lock_conflict: block_node
   on_tool_rate_limit: retry_with_backoff
 ```
 
@@ -147,6 +174,7 @@ The default policy should be conservative:
 - Read-only, low-risk Skills may be parallelized.
 - LLM-backed Skills default to sequential execution unless deterministic aggregation is defined.
 - Write actions and external side effects are never parallelized in Phase 1.
+- Parallel sub-agent dispatch requires compatible Sub-Agent manifests and resource locks.
 - A Human Gate blocks dependent nodes but does not need to block unrelated independent nodes unless scenario policy requires a full pause.
 
 ## Blackboard Merge And Fan-in
@@ -183,6 +211,380 @@ Fan-in nodes read only from Blackboard refs, not from direct sub-agent messages.
 - Artifact versions match the expected refs.
 
 This makes parallelism safe enough for multi-agent workflows instead of turning it into uncontrolled message passing.
+
+## Sub-Agent Runtime Contract
+
+Sub-agents are governed execution workers for DAG nodes, not free-form peers of the Main Agent. A sub-agent can run a workflow step, execute a Skill, review an artifact, evaluate a result, maintain checkpoint state, or prepare governance drafts, but every call is created, bounded, and observed by the MainAgent Scheduler.
+
+The framework should distinguish these sub-agent scopes:
+
+| Scope | Purpose | Reuse |
+|---|---|---|
+| `system` | Framework-owned roles such as `ScenarioCheckpointWriter` or governance reviewers | Runtime internal only |
+| `global` | Reusable worker templates approved for multiple scenarios | Referenced by exact version |
+| `scenario_local` | Scenario-specific workers that know local terminology and workflow shape | Only inside the owning scenario |
+| `task_ephemeral` | One-off delegated workers created for a single DAG node or repair loop | Never reusable |
+
+Scenario-local sub-agents cannot be referenced by another scenario. Promotion to global requires the same review, tests, versioning, and approval process as scenario-local Skill promotion.
+
+### Sub-Agent Registry
+
+Sub-agents should be resolved through explicit registries, similar to Skills. The registry is responsible for ID resolution, version pinning, scope checks, and manifest loading.
+
+Recommended shape:
+
+```text
+sub_agents/
+  global/
+    evidence_review_worker/
+      SUBAGENT.md
+      tests/
+scenario_packs/
+  contract_payment_review/
+    sub_agents/
+      payment_risk_worker/
+        SUBAGENT.md
+        tests/
+```
+
+Registry rules:
+
+- `system:` sub-agents are registered by the runtime and are not referenced from Scenario Packs except through framework-owned roles.
+- `global:` sub-agents resolve only from the approved global sub-agent registry by exact version.
+- `local:` sub-agents resolve only from the pinned scenario directory.
+- `ephemeral:` sub-agents are created from the frozen plan and cannot be stored for reuse.
+- A Scenario Pack must list every reusable sub-agent it may dispatch.
+- A local sub-agent cannot import another scenario's Skills, evaluators, plans, memory, or local sub-agents.
+- Registry resolution must happen before plan freezing, and the frozen plan stores exact sub-agent IDs and versions.
+
+### Sub-Agent Manifest
+
+Every reusable sub-agent should have a manifest. A Skill manifest describes a capability; a Sub-Agent manifest describes an execution role, permissions, lifecycle, and reporting contract.
+
+Example:
+
+```yaml
+subagent_id: local:payment_risk_worker@0.1.0
+scope: scenario_local
+scenario_id: contract_payment_review
+runtime_mode: autonomous
+role: payment_risk_analysis
+autonomy_level: 2
+allowed_tools:
+  - document.read_snapshot
+  - policy.search
+allowed_tool_risk:
+  max_risk_level: read_only
+  external_side_effects: false
+allowed_memory_layers:
+  - short_term_runtime
+  - mid_term_episodic
+context_policy:
+  bundle_purpose: execute_dag_node
+  max_context_tokens: 6000
+  allow_episode_search: true
+  allow_evolution_candidates: false
+input_schema: PaymentRiskInput
+output_schema: PaymentRiskArtifact
+required_evaluators:
+  - payment_risk_schema@0.1.0
+  - evidence_coverage@0.1.0
+timeout_policy:
+  max_wall_clock_seconds: 180
+  on_timeout: retry_once_then_block
+retry_policy:
+  max_attempts: 2
+  retry_on:
+    - transient_tool_error
+    - evaluation_repairable
+human_gate_policy:
+  may_request_human_gate: true
+  required_for:
+    - missing_authoritative_source
+progress_reporting:
+  emit_progress_events: true
+  min_interval_seconds: 20
+observability:
+  record_prompt_hash: true
+  record_context_bundle_id: true
+  record_tool_calls: true
+```
+
+Manifest rules:
+
+- `runtime_mode` must be one of `workflow`, `autonomous`, `reviewer`, `evaluator`, `writer`, or `governance`.
+- `autonomy_level` cannot exceed the Scenario Pack's maximum autonomy policy.
+- `allowed_tools` must be a subset of the Scenario Pack and ToolGateway policy.
+- `allowed_memory_layers` must match the Context Bundle purpose and the node's `allowed_use`.
+- `required_evaluators` must exist in the paired Evaluation Contract.
+- A sub-agent manifest is not a permission grant by itself; it is validated at dispatch time.
+
+### Lifecycle State Machine
+
+The scheduler should track sub-agent state separately from DAG node state:
+
+```text
+pending
+-> ready
+-> dispatching
+-> running
+-> waiting_tool
+-> waiting_human
+-> evaluating
+-> succeeded
+```
+
+Failure and terminal states:
+
+```text
+running -> failed
+running -> blocked
+running -> timed_out
+running -> cancelled
+failed -> retrying -> dispatching
+timed_out -> retrying -> dispatching
+blocked -> waiting_human
+```
+
+Rules:
+
+- A sub-agent can be `succeeded` only after its required output artifacts exist in TaskBlackboard.
+- A DAG node can be `succeeded` only after required EvaluationResults are present and non-blocking.
+- A sub-agent that times out must produce a recovery record before retry or cancellation.
+- A cancelled sub-agent cannot write new artifacts after cancellation.
+- A blocked sub-agent must report the missing input, permission, tool, or human decision that blocks it.
+
+### Dispatch Contract
+
+The scheduler should dispatch a sub-agent with a structured request:
+
+```yaml
+dispatch_request:
+  dispatch_id: dispatch_001
+  task_id: task_001
+  node_id: detect_payment_risk
+  subagent_id: local:payment_risk_worker@0.1.0
+  scenario_id: contract_payment_review
+  scenario_version: 0.3.0
+  evaluation_contract_version: 0.2.0
+  context_bundle_id: ctx_task_001_detect_payment_risk_v1
+  input_refs:
+    - blackboard://task_001/artifacts/profiled_document_v1
+  expected_outputs:
+    - ref: blackboard://task_001/artifacts/payment_risk_v1
+      schema: PaymentRiskArtifact
+  required_evaluators:
+    - payment_risk_schema@0.1.0
+    - evidence_coverage@0.1.0
+  resource_locks:
+    - artifact:payment_risk_v1:write
+  deadline_at: 2026-06-11T10:05:00+08:00
+```
+
+Dispatch rules:
+
+- The request is immutable after dispatch.
+- The Context Bundle is attached by ID and hash so replay can reconstruct what the sub-agent saw.
+- The scheduler must reject dispatch if input refs are missing, stale, unevaluated, or outside scenario scope.
+- The scheduler must reject dispatch if required evaluators are missing or disabled.
+- A sub-agent cannot dispatch another sub-agent. It may request a follow-up action through TaskBlackboard, and the scheduler decides.
+
+### Return Contract
+
+Every sub-agent must return a structured result:
+
+```yaml
+subagent_result:
+  dispatch_id: dispatch_001
+  status: succeeded
+  summary: Payment risk extracted with evidence from section 4.2.
+  artifact_refs:
+    - blackboard://task_001/artifacts/payment_risk_v1
+  evaluation_targets:
+    - blackboard://task_001/artifacts/payment_risk_v1
+  progress_event_refs:
+    - blackboard://task_001/events/progress_003
+  blocking_issues: []
+  findings_worth_promoting:
+    - type: repeated_exception_candidate
+      summary: Payment terms often appear in appendices.
+      evidence_refs:
+        - blackboard://task_001/artifacts/payment_risk_v1
+  tool_call_refs:
+    - toolcall://task_001/document.read_snapshot/002
+  exact_values:
+    evaluator_id: payment_risk_schema@0.1.0
+```
+
+Return rules:
+
+- `status` must be one of `succeeded`, `partial`, `failed`, `blocked`, `timed_out`, or `cancelled`.
+- `artifact_refs` must point to TaskBlackboard artifacts, not inline untracked content.
+- `findings_worth_promoting` are candidates only; they do not change Skills, Memory, or Evaluation policy.
+- `exact_values` are copied byte-for-byte into checkpoint records when needed for replay.
+- A result with inline business claims but no artifact refs is invalid for downstream consumption.
+
+### Permission Model
+
+Sub-agent permissions should be explicit and deny-by-default:
+
+| Permission | Meaning | Default |
+|---|---|---|
+| `tool.read` | Read-only tool calls through ToolGateway | Deny unless declared |
+| `tool.write` | Write or external side-effect tools | Deny in Phase 1 |
+| `blackboard.read` | Read authorized refs | Allow only declared refs |
+| `blackboard.write` | Write declared artifact refs | Allow only expected outputs |
+| `memory.read` | Read memory through ScenarioContextManager | Allow only bundle items |
+| `memory.write` | Write durable memory | Deny for ordinary sub-agents |
+| `human_gate.request` | Ask for user or reviewer decision | Allow only if manifest permits |
+| `candidate.create` | Propose Skill, evaluator, or memory candidates | Allow only for governance flows |
+| `network.external` | Reach external systems | Deny unless ToolGateway and scenario policy allow |
+
+The runtime should check permissions at dispatch, at every tool call, at every artifact write, and before accepting the final return contract.
+
+### Resource Locks And Concurrency Guard
+
+Parallel dispatch needs explicit resource locks. Locks protect artifact refs, external resources, write tools, and high-risk state.
+
+Example:
+
+```yaml
+resource_lock_policy:
+  lock_namespace: task_001
+  locks:
+    - id: artifact:payment_risk_v1:write
+      mode: exclusive
+      owner: detect_payment_risk
+    - id: dataset:upload_v1:read
+      mode: shared
+      owner: "*"
+    - id: external:crm_case_123:write
+      mode: exclusive
+      owner: update_case_status
+  on_lock_conflict: block_node
+```
+
+Rules:
+
+- Multiple read-only nodes may share a `read` lock.
+- Any artifact write lock is exclusive.
+- External write locks are exclusive and require Human Gate in Phase 1.
+- A fan-in node cannot run while upstream write locks are unresolved.
+- Timeout or cancellation must release locks and record a recovery event.
+
+### Progress Event Schema
+
+Sub-agents should report progress as structured events. The `ScenarioCheckpointWriter` materializes and reconciles these events into progress files and checkpoint sections.
+
+Example:
+
+```yaml
+progress_event:
+  event_id: progress_003
+  task_id: task_001
+  node_id: detect_payment_risk
+  dispatch_id: dispatch_001
+  subagent_id: local:payment_risk_worker@0.1.0
+  status: running
+  message: Extracted payment clause candidates.
+  artifact_refs:
+    - blackboard://task_001/artifacts/payment_clause_candidates_v1
+  exact_values:
+    clause_ref: section_4.2
+  blocking_reason: null
+  written_at: 2026-06-11T10:02:00+08:00
+```
+
+Progress rules:
+
+- Progress events are append-only.
+- They must be written to TaskBlackboard or the runtime event stream, not directly to `progress.md`.
+- `ScenarioCheckpointWriter` is the only component that writes `memory/tasks/<task_id>/progress.md`.
+- Every progress event must include `task_id`, `node_id`, `dispatch_id`, `subagent_id`, `status`, and `written_at`.
+- Progress events must not contain raw source documents or hidden instructions.
+
+### Error, Retry, And Escalation Policy
+
+Sub-agent failures should be typed so the scheduler can respond deterministically.
+
+| Error type | Scheduler response |
+|---|---|
+| `transient_tool_error` | Retry with backoff within retry budget |
+| `tool_permission_denied` | Block and surface policy reason |
+| `missing_input_ref` | Block upstream or request repair |
+| `schema_invalid_output` | Send to repair loop if allowed |
+| `evaluation_repairable` | Retry or dispatch repair sub-agent |
+| `evaluation_blocking` | Stop downstream and surface blocking EvaluationResult |
+| `unsafe_output` | Quarantine artifact and require Human Gate |
+| `timeout` | Retry once or cancel based on manifest |
+| `context_incompatible` | Rebuild context bundle and retry once |
+| `human_gate_required` | Pause dependent nodes until decision |
+
+Retry rules:
+
+- Retries must use the same frozen plan unless a rule-maintenance flow creates a new approved version.
+- Retry attempts must be linked to the original dispatch ID.
+- A repaired artifact must get a new versioned Blackboard ref.
+- Repeated failure can create an Episode signal, not an automatic Skill change.
+
+### Evaluation Binding
+
+No sub-agent output can be consumed by a downstream node unless one of these is true:
+
+- It has a passing or allowed-partial EvaluationResult.
+- It is explicitly labeled `candidate_only` and the downstream node is permitted to read candidate artifacts.
+- A Human Gate explicitly authorizes degraded continuation.
+
+The Evaluation Contract must map sub-agent outputs to evaluators:
+
+```yaml
+subagent_evaluation_bindings:
+  local:payment_risk_worker@0.1.0:
+    outputs:
+      PaymentRiskArtifact:
+        required_evaluators:
+          - payment_risk_schema@0.1.0
+          - evidence_coverage@0.1.0
+        blocking_failure_reasons:
+          - missing_evidence
+          - unsupported_clause_type
+```
+
+This prevents a sub-agent from becoming trusted just because it completed a task.
+
+### Observability And Audit
+
+Each sub-agent dispatch should produce an audit record:
+
+```yaml
+subagent_audit_record:
+  dispatch_id: dispatch_001
+  parent_task_id: task_001
+  node_id: detect_payment_risk
+  subagent_id: local:payment_risk_worker@0.1.0
+  scenario_id: contract_payment_review
+  scenario_version: 0.3.0
+  evaluation_contract_version: 0.2.0
+  context_bundle_id: ctx_task_001_detect_payment_risk_v1
+  context_bundle_hash: sha256:...
+  input_refs:
+    - blackboard://task_001/artifacts/profiled_document_v1
+  output_refs:
+    - blackboard://task_001/artifacts/payment_risk_v1
+  tool_call_refs:
+    - toolcall://task_001/document.read_snapshot/002
+  evaluator_refs:
+    - eval_result_004
+  token_usage:
+    input_tokens: 4200
+    output_tokens: 900
+  timing:
+    started_at: 2026-06-11T10:00:00+08:00
+    finished_at: 2026-06-11T10:03:00+08:00
+  final_status: succeeded
+```
+
+The audit record should be queryable by scenario, task, sub-agent, node, status, and EvaluationResult.
 
 ## Skill Manifest
 
@@ -296,8 +698,10 @@ It should contain:
 
 - Scenario identity and routing terms.
 - Allowed Skills and Skill versions.
+- Allowed sub-agents and sub-agent versions.
 - Optional default Task DAG or Workflow DAG template.
 - Concurrency policy.
+- Resource lock policy.
 - Merge and fan-in policy.
 - Planner rules or planner adapter.
 - Context policy.
@@ -319,6 +723,9 @@ allowed_skills:
   - compute_grouped_metric@0.2.0
   - rank_metric_values@0.1.0
   - summarize_metric_report@0.1.0
+allowed_sub_agents:
+  - local:metric_analysis_worker@0.1.0
+  - global:evidence_review_worker@0.1.0
 default_flow:
   - profile_dataset
   - compute_grouped_metric
@@ -328,6 +735,9 @@ concurrency_policy:
   max_parallel_sub_agents: 1
   max_parallel_skill_steps: 1
   max_parallel_tool_calls: 1
+resource_lock_policy:
+  require_resource_locks: true
+  on_lock_conflict: block_node
 merge_policy:
   artifact_conflict: block
   fan_in_requires:
@@ -363,10 +773,15 @@ scenario_packs/
       tool_policy.yaml
       context_policy.yaml
       concurrency_policy.yaml
+      resource_lock_policy.yaml
       merge_policy.yaml
       human_gate_policy.yaml
     contracts/
       evaluation_contract.yaml
+    sub_agents/
+      metric_analysis_worker/
+        SUBAGENT.md
+        tests/
     skills/
       compute_grouped_metric/
         SKILL.md
@@ -767,19 +1182,23 @@ Once a Scenario Pack is enabled, normal task execution should follow this govern
 
 ```text
 user request
--> Scenario Router selects enabled scenario
--> bind scenario_id, scenario_version, evaluation_contract_version
--> ScenarioPathGuard opens pinned scenario root
--> Planner creates candidate plan or DAG
--> SkillPolicyValidator and PlanValidator freeze executable plan
+-> Main Agent captures intent, inputs, task type, and risk level
+-> Main Agent asks Scenario Router to select one enabled scenario
+-> Main Agent binds scenario_id, scenario_version, evaluation_contract_version
+-> Main Agent activates ScenarioPathGuard for the pinned scenario root
+-> Main Agent asks ScenarioContextManager for the initial context bundle
+-> Main Agent asks Planner for a candidate plan or DAG
+-> Main Agent runs SkillPolicyValidator, SubAgentPolicyValidator, and PlanValidator
+-> Main Agent freezes the executable plan
 -> MainAgent Scheduler dispatches ready nodes
--> sub-agents execute Skills through ToolGateway
--> Skill outputs write artifacts to TaskBlackboard
+-> sub-agents execute Skills through ToolGateway under dispatch contracts
+-> Skill and sub-agent outputs write artifacts to TaskBlackboard
 -> ScenarioCheckpointWriter records progress and state
--> EvaluationRunner evaluates node outputs and fan-in
+-> Main Agent triggers EvaluationRunner for node outputs and fan-in
+-> Main Agent routes blocking or high-risk outcomes to Human Gate
+-> Main Agent resumes, retries, repairs, or blocks based on EvaluationResult and Human Gate
 -> GoalJudgeEvaluator checks task-level stop condition
--> Human Gate handles blocking or high-risk outcomes
--> Report is assembled from evaluated artifacts only
+-> Main Agent assembles report from evaluated artifacts only
 ```
 
 The runtime does not regenerate `SCENARIO.md`, `EVALUATION.md`, Skill manifests, or Evaluation Contracts during this flow. It may append runtime state and artifacts under writer-owned memory, TaskBlackboard, run snapshots, or explicitly approved task output folders.
@@ -895,17 +1314,25 @@ The Planner may choose Skills, but it only creates candidates. Before execution,
 8. Local Skill references resolve only under the selected scenario directory.
 9. Cross-scenario local Skill references are rejected.
 10. Every Skill exists, is versioned, and is allowed by the Scenario Pack.
-11. Each Skill input can be satisfied by prior outputs, user input, or allowed ToolGateway results.
-12. Tool permissions match the Skill manifest and scenario policy.
-13. Context references are limited to authorized Blackboard, scenario Memory, and dataset views.
-14. Required baseline, Skill-level, scenario-level, fan-in, report, and goal-judge evaluators are present and versioned.
-15. Human Gate requirements are attached for risky operations.
-16. DAG and Step Plan topology is acyclic and bounded.
-17. Autonomy Policy allows the proposed number of steps, alternatives, retries, and parallelism.
-18. Concurrency Policy allows every parallel-ready layer.
-19. Merge Policy covers any fan-in node or shared logical artifact.
-20. ScenarioCheckpointWriter permissions are available for long-running or autonomous tasks.
-21. Golden and calibration case requirements are satisfied for enabled scenarios.
+11. Every reusable sub-agent exists, is versioned, and is allowed by the Scenario Pack.
+12. Global sub-agent references resolve only from the approved global sub-agent registry.
+13. Local sub-agent references resolve only under the selected scenario directory.
+14. Cross-scenario local sub-agent references are rejected.
+15. Each Skill input can be satisfied by prior outputs, user input, or allowed ToolGateway results.
+16. Each sub-agent input can be satisfied by authorized Blackboard refs, context bundle refs, or allowed ToolGateway results.
+17. Tool permissions match the Skill manifest, Sub-Agent manifest, and scenario policy.
+18. Context references are limited to authorized Blackboard, scenario Memory, and dataset views.
+19. Context bundle purpose and allowed memory layers match the target node and sub-agent manifest.
+20. Required baseline, Skill-level, sub-agent-level, scenario-level, fan-in, report, and goal-judge evaluators are present and versioned.
+21. Every sub-agent output has a binding to required evaluators or an explicit Human Gate path.
+22. Human Gate requirements are attached for risky operations.
+23. DAG and Step Plan topology is acyclic and bounded.
+24. Autonomy Policy allows the proposed number of steps, alternatives, retries, and parallelism.
+25. Concurrency Policy allows every parallel-ready layer.
+26. Required resource locks are declared and can be acquired for parallel dispatch.
+27. Merge Policy covers any fan-in node or shared logical artifact.
+28. ScenarioCheckpointWriter permissions are available for long-running or autonomous tasks.
+29. Golden and calibration case requirements are satisfied for enabled scenarios.
 
 Only a passing candidate becomes a frozen executable plan.
 
@@ -915,10 +1342,15 @@ Constraints should be split into two layers.
 
 Framework hard constraints:
 
+- The Main Agent owns the top-level task run from intake through final report.
+- Every workflow phase transition is approved by the Main Agent or by a framework policy component invoked by the Main Agent.
 - All tools go through ToolGateway.
 - All executable plans go through PlanValidator.
 - All Skill calls are scheduled by the MainAgent Scheduler and Executor.
+- All sub-agent calls are created by the MainAgent Scheduler from a validated dispatch contract.
+- Sub-agents cannot dispatch other sub-agents directly.
 - All outputs that matter are written to TaskBlackboard.
+- Sub-agent outputs must satisfy the return contract before downstream consumption.
 - Final answers require EvaluationRunner aggregation.
 - Autonomous task completion requires GoalJudgeEvaluator or an explicit low-risk bypass policy.
 - Enabled scenarios require a valid paired Evaluation Contract.
@@ -928,10 +1360,13 @@ Framework hard constraints:
 - Scenario checkpoints, memory, notes, and task progress are scenario-local.
 - Checkpoint-writer-owned files are writable only by ScenarioCheckpointWriter.
 - Cross-scenario local Skill reuse is denied by default.
+- Cross-scenario local sub-agent reuse is denied by default.
 - Writes and high-risk actions require Human Gate.
 - Raw user content remains untrusted unless transformed by verified tools.
 - Parallel nodes cannot read each other's private state or direct messages.
+- Parallel writes require resource locks.
 - Fan-in nodes can read only authorized Blackboard refs and evaluation results.
+- Downstream nodes cannot consume sub-agent outputs unless EvaluationResult, candidate-only policy, or Human Gate permits it.
 - ScenarioDream and ScenarioDistill can create draft candidates only; they cannot enable runtime policy.
 
 Skill-declared constraints:
@@ -1059,21 +1494,26 @@ Before treating this as a production multi-industry platform, the following comp
 
 1. Scenario Pack schema and linter.
 2. Skill manifest schema and SkillPolicyValidator.
-3. MainAgent Scheduler with ready-node dispatch, state transitions, retries, timeouts, and Human Gate blocking.
-4. Blackboard persistence with artifact versioning, conflict entries, and replay snapshots.
-5. Evaluation registry with domain-specific evaluator contracts.
-6. Golden and calibration case runners per Scenario Pack.
-7. ToolGateway policy with deny-by-default authorization.
-8. ScenarioPathGuard with per-scenario read/write allowlists.
-9. ScenarioCheckpointWriter with checkpoint, memory, notes, and task progress ownership.
-10. ScenarioContextManager with Scenario Context Bundle compilation, active recall protocol, and section-aware budgets.
-11. GoalJudgeEvaluator for task-level stop conditions.
-12. Exception Learning Assistant backed by ScenarioDream and ScenarioDistill draft-only flows.
-13. Tenant, role, data-classification, and credential-isolation model.
-14. Observability for scheduler transitions, tool calls, context bundle generation, checkpoint updates, evaluation outcomes, goal-judge verdicts, and human gates.
-15. Release and rollback process for Scenario Packs and Skill versions.
+3. Sub-Agent manifest schema, registry, and SubAgentPolicyValidator.
+4. Main Agent run controller for intake, scenario binding, context setup, planning, validation, scheduling, evaluation, Human Gate, checkpointing, completion, and learning handoff.
+5. MainAgent Scheduler with ready-node dispatch, state transitions, retries, timeouts, and Human Gate blocking.
+6. Sub-agent dispatch and return contract validation.
+7. Resource lock manager for parallel dispatch, fan-in, and write isolation.
+8. Blackboard persistence with artifact versioning, conflict entries, and replay snapshots.
+9. Evaluation registry with domain-specific evaluator contracts.
+10. Golden and calibration case runners per Scenario Pack.
+11. ToolGateway policy with deny-by-default authorization.
+12. ScenarioPathGuard with per-scenario read/write allowlists.
+13. ScenarioCheckpointWriter with checkpoint, memory, notes, and task progress ownership.
+14. ScenarioContextManager with Scenario Context Bundle compilation, active recall protocol, and section-aware budgets.
+15. GoalJudgeEvaluator for task-level stop conditions.
+16. Exception Learning Assistant backed by ScenarioDream and ScenarioDistill draft-only flows.
+17. Sub-agent audit store for dispatches, context bundle hashes, tool calls, outputs, evaluator results, and terminal states.
+18. Tenant, role, data-classification, and credential-isolation model.
+19. Observability for main-agent phase transitions, scheduler transitions, sub-agent lifecycle transitions, tool calls, context bundle generation, checkpoint updates, evaluation outcomes, goal-judge verdicts, and human gates.
+20. Release and rollback process for Scenario Packs, Skill versions, Sub-Agent versions, and Evaluation Contracts.
 
-For near-term implementation, the first platform investments should be Scenario Pack schema/linting, Skill manifests with policy validation, deterministic MainAgent Scheduler, ScenarioPathGuard, a minimal ScenarioCheckpointWriter, and a baseline ScenarioContextManager for task start and resume.
+For near-term implementation, the first platform investments should be Scenario Pack schema/linting, Skill and Sub-Agent manifests with policy validation, a Main Agent run controller, deterministic MainAgent Scheduler, dispatch and return contract validation, ScenarioPathGuard, a minimal ScenarioCheckpointWriter, and a baseline ScenarioContextManager for task start and resume.
 
 ## Migration Plan
 
@@ -1082,31 +1522,40 @@ PowerBanana should migrate incrementally.
 1. Introduce a Skill manifest model next to the existing `SkillDefinition`.
 2. Bind existing `compute_grouped_metric` and `rank_metric_values` Skills to manifests.
 3. Add `SkillPolicyValidator` and run it before Step Plan execution.
-4. Move hardcoded metric requirements into Skill and analysis vocabulary metadata.
-5. Introduce a minimal `sales_channel_analysis` Scenario Pack for the existing path.
-6. Add a Scenario Pack schema and linter before creating additional industry packs.
-7. Add an Evaluation Pack schema, Evaluation Contract compiler, and EvaluationPolicyLinter.
-8. Create an `EVALUATION.md` for `sales_channel_analysis` and pair it with the first Scenario Pack.
-9. Let the Planner select the Scenario Pack and Skill chain, while preserving the current fixed fallback.
-10. Introduce a scheduler state model for `pending`, `ready`, `running`, `succeeded`, `failed`, `skipped`, `blocked`, and `needs_human_gate`.
-11. Replace the linear TaskDagExecutor loop with ready-node scheduling while keeping default concurrency at 1.
-12. Add Scenario Pack `concurrency_policy` and enforce it before dispatch.
-13. Add merge and fan-in validation for aggregate nodes.
-14. Enable parallel execution first for low-risk read-only Skills.
-15. Add one non-data-analysis Scenario Pack, such as contract review or ticket triage, to validate cross-industry reuse.
-16. Add first-run Agent initialization that launches the Scenario and Evaluation builders when no enabled Scenario Pack exists.
-17. Add rule maintenance change requests that create new draft pack versions instead of editing enabled packs in place.
-18. Add one user-friendly builder path that collects both scenario requirements and evaluation requirements through guided questions.
-19. Add scenario directory isolation checks for file resolution and cross-scenario references.
-20. Add global and scenario-local Skill registries with explicit `global:` and `local:` resolution.
-21. Add a promotion path for turning a scenario-local Skill into a reviewed global Skill.
-22. Add ScenarioPathGuard for scenario file reads and writes.
-23. Add ScenarioCheckpointWriter with scenario-local checkpoint and memory templates.
-24. Add ScenarioContextManager with Scenario Context Bundle generation, active recall protocol, and context budgets.
-25. Add GoalJudgeEvaluator as a task-level stop-condition gate.
-26. Add ScenarioDream for repeated exception summarization and process memory.
-27. Add ScenarioDistill for user-confirmed, draft-only Skill, evaluator, golden case, and calibration case candidates.
-28. Expand golden cases to assert selected Skills, required evaluators, scheduler transitions, path-guard decisions, context bundle contents, checkpoint updates, exception-learning prompts, goal-judge verdicts, and policy gates.
+4. Introduce a Sub-Agent manifest model and a minimal default worker for the existing metric-analysis path.
+5. Add `SubAgentPolicyValidator` and require validated Sub-Agent manifests before dispatch.
+6. Move hardcoded metric requirements into Skill and analysis vocabulary metadata.
+7. Introduce a minimal `sales_channel_analysis` Scenario Pack for the existing path.
+8. Add a Scenario Pack schema and linter before creating additional industry packs.
+9. Add an Evaluation Pack schema, Evaluation Contract compiler, and EvaluationPolicyLinter.
+10. Create an `EVALUATION.md` for `sales_channel_analysis` and pair it with the first Scenario Pack.
+11. Let the Planner select the Scenario Pack, Skill chain, and allowed sub-agents, while preserving the current fixed fallback.
+12. Add a Main Agent run controller that owns intake, scenario binding, context setup, planning, validation, scheduling, evaluation, Human Gate, checkpointing, completion, and learning handoff.
+13. Introduce a scheduler state model for `pending`, `ready`, `running`, `succeeded`, `failed`, `skipped`, `blocked`, and `needs_human_gate`.
+14. Add sub-agent lifecycle state tracking for `dispatching`, `waiting_tool`, `waiting_human`, `evaluating`, `timed_out`, and `cancelled`.
+15. Replace the linear TaskDagExecutor loop with ready-node scheduling while keeping default concurrency at 1.
+16. Add sub-agent dispatch and return contract schemas, then validate them before and after every delegated run.
+17. Add Scenario Pack `concurrency_policy` and enforce it before dispatch.
+18. Add resource lock declaration and acquisition before parallel dispatch.
+19. Add merge and fan-in validation for aggregate nodes.
+20. Add progress event schema and ScenarioCheckpointWriter reconciliation from task-local events.
+21. Add sub-agent audit records for dispatches, context bundle hashes, tool calls, artifacts, evaluator results, and terminal states.
+22. Enable parallel execution first for low-risk read-only Skills and sub-agents.
+23. Add one non-data-analysis Scenario Pack, such as contract review or ticket triage, to validate cross-industry reuse.
+24. Add first-run Agent initialization that launches the Scenario and Evaluation builders when no enabled Scenario Pack exists.
+25. Add rule maintenance change requests that create new draft pack versions instead of editing enabled packs in place.
+26. Add one user-friendly builder path that collects both scenario requirements and evaluation requirements through guided questions.
+27. Add scenario directory isolation checks for file resolution and cross-scenario references.
+28. Add global and scenario-local Skill registries with explicit `global:` and `local:` resolution.
+29. Add global and scenario-local sub-agent registries with explicit `global:` and `local:` resolution.
+30. Add a promotion path for turning a scenario-local Skill or sub-agent into a reviewed global asset.
+31. Add ScenarioPathGuard for scenario file reads and writes.
+32. Add ScenarioCheckpointWriter with scenario-local checkpoint and memory templates.
+33. Add ScenarioContextManager with Scenario Context Bundle generation, active recall protocol, and context budgets.
+34. Add GoalJudgeEvaluator as a task-level stop-condition gate.
+35. Add ScenarioDream for repeated exception summarization and process memory.
+36. Add ScenarioDistill for user-confirmed, draft-only Skill, evaluator, golden case, and calibration case candidates.
+37. Expand golden cases to assert selected Skills, selected sub-agents, required evaluators, dispatch contracts, return contracts, main-agent phase transitions, scheduler transitions, resource locks, path-guard decisions, context bundle contents, checkpoint updates, exception-learning prompts, goal-judge verdicts, and policy gates.
 
 This path avoids a large rewrite. The existing fixed workflow becomes the first Scenario Pack.
 
@@ -1115,6 +1564,7 @@ This path avoids a large rewrite. The existing fixed workflow becomes the first 
 Tests should cover:
 
 - Skill manifest parsing and validation.
+- Sub-Agent manifest parsing and validation.
 - Scenario Pack schema and lint validation.
 - Evaluation Pack schema and lint validation.
 - Evaluation Contract compilation from `SCENARIO.md` and `EVALUATION.md`.
@@ -1123,18 +1573,36 @@ Tests should cover:
 - Rejection of unapproved cross-scenario references.
 - Rejection of `local:` Skill references outside the pinned scenario directory.
 - Rejection of another scenario's local Skill.
+- Rejection of `local:` sub-agent references outside the pinned scenario directory.
+- Rejection of another scenario's local sub-agent.
 - Rejection of cross-scenario memory, checkpoint, notes, task progress, draft, or change file references.
 - Rejection of direct writes to ScenarioCheckpointWriter-owned files by ordinary agents.
 - Acceptance of approved `global:` Skill references by exact version.
+- Acceptance of approved `global:` sub-agent references by exact version.
 - Skill promotion tests proving local Skills cannot become global without review, versioning, tests, and approval.
+- Sub-agent promotion tests proving local sub-agents cannot become global without review, versioning, tests, and approval.
 - Rejection of unknown or disabled Skills.
+- Rejection of unknown or disabled sub-agents.
 - Rejection of Skills that request unauthorized tools.
+- Rejection of sub-agents that request unauthorized tools, memory layers, or context bundle purposes.
 - Rejection of missing required evaluators.
 - Rejection of high-risk Skills without Human Gate.
+- Rejection of high-risk sub-agents without Human Gate.
 - Rejection of parallel nodes when Scenario Pack concurrency does not allow them.
+- Rejection of parallel sub-agent dispatch when Sub-Agent manifests or resource locks do not allow it.
 - Rejection of fan-in nodes without an explicit merge policy.
 - Rejection of fan-in nodes without fan-in evaluator coverage.
+- Main Agent run-controller tests proving intake, scenario binding, context setup, planning, validation, scheduling, evaluation, Human Gate, checkpointing, completion, and learning handoff occur only through approved phase transitions.
 - Scheduler tests for ready-node selection, dependency blocking, retry limits, timeout handling, and Human Gate blocking.
+- Sub-agent lifecycle tests for dispatching, running, waiting-tool, waiting-human, evaluating, succeeded, failed, timed-out, cancelled, and retrying states.
+- Dispatch contract tests rejecting missing input refs, stale refs, unevaluated refs, out-of-scope refs, and missing evaluator bindings.
+- Return contract tests rejecting inline business claims without artifact refs, wrong status values, missing evaluation targets, and malformed exact values.
+- Permission model tests for ToolGateway calls, Blackboard reads, Blackboard writes, memory reads, memory writes, Human Gate requests, and candidate creation.
+- Resource lock tests for shared read locks, exclusive write locks, lock conflicts, fan-in waits, timeout release, and cancellation release.
+- Progress event schema tests for append-only events, required fields, freshness metadata, and ScenarioCheckpointWriter materialization.
+- Error, retry, and escalation tests for transient tool errors, permission denials, schema-invalid outputs, repairable evaluations, blocking evaluations, unsafe outputs, timeouts, incompatible context bundles, and Human Gate pauses.
+- Evaluation binding tests proving downstream nodes cannot consume sub-agent output without passing evaluation, allowed-partial evaluation, candidate-only policy, or Human Gate approval.
+- Sub-agent audit tests proving dispatch IDs, context bundle hashes, input refs, output refs, tool call refs, evaluator refs, timing, token usage, and final status are recorded.
 - GoalJudgeEvaluator tests for satisfied, missing-evidence, impossible, judge-unavailable, and max-reentry cases.
 - Blackboard tests for parallel artifact version conflicts and conflict entry creation.
 - ScenarioCheckpointWriter tests for progress reconciliation, exact-form preservation, bounded checkpoint sections, and writer allowlists.
