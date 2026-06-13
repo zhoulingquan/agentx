@@ -20,6 +20,7 @@ Older documents are retained as reference or historical material. When any docum
 | Golden cases and calibration | [Regression and Calibration](regression-and-calibration.md) |
 | Evaluation governance | [Evaluation Layer](evaluation-layer.md) |
 | Near-term design adjustment | [Power Banana Near-Term Design Adjustment](superpowers/specs/2026-06-12-powerbanana-near-term-design-adjustment.md) |
+| Scenario-contract migration route | [Power Banana Scenario Contract Migration Design](superpowers/specs/2026-06-13-powerbanana-scenario-contract-migration-design.md) |
 | Skill-governed runtime direction | [Skill-Governed Runtime Design](superpowers/specs/2026-06-11-skill-governed-runtime-design.md) |
 | Runtime memory system | [Power Banana Memory System Design](superpowers/specs/2026-06-11-powerbanana-memory-system-design.md) |
 | GitHub workflow | [Repository Workflow](repository-workflow.md) |

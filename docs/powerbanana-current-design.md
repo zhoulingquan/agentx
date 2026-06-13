@@ -1454,25 +1454,21 @@ Future design work should follow this rule:
 - New topic specs may be created for focused design work.
 - Once a topic spec is accepted, its current decisions should be merged back into this document.
 - Implementation plans should cite this document first.
+- The accepted near-term migration route is detailed in `docs/superpowers/specs/2026-06-13-powerbanana-scenario-contract-migration-design.md`; this document keeps the authority-level summary.
 
 ## Migration Phases
 
 Power Banana should evolve in phases:
 
-1. **Design convergence.** Establish this current design as the implementation authority.
-2. **Banana Bunch identity.** Adopt `banana_bunch_<id>` as the task-run identity and define Banana Trunk, Banana Bunch Main Agent, Banana Bunch Sub-Agents, and Banana Bunch Blackboard terminology.
-3. **Banana Bunch lifecycle.** Define lifecycle states, transition authority, checkpoint records, terminal-state behavior, and pause/resume semantics.
-4. **Banana Bunch internal execution protocol.** Define Bunch task contracts, Sub-Agent input and output refs, artifact records, evaluation checkpoints, Human Gate insertion, retry policy, and internal forbidden operations.
-5. **Scenario schema.** Define Scenario Pack and Evaluation Contract declaration files, status model, enabled lint rules, check structure, and runtime loading flow.
-6. **Wrap first scenario.** Describe the existing channel metric path as `sales_channel_analysis` without broadening behavior.
-7. **Validate policy.** Enforce allowed sub-agents, skills, metrics, evaluators, gates, and serial concurrency inside one Banana Bunch.
-8. **Trunk and Bunch permissions.** Enforce default Bunch isolation, Trunk read levels, cross-bunch access records, and rejection of cross-bunch writes.
-9. **Checkpoint ownership.** Add Banana Bunch Checkpoint Writer for durable short-term Banana Bunch runtime state.
-10. **Config loading.** Move scenario and evaluation definitions into versioned files after schemas stabilize.
-11. **Trunk-Bunch event protocol.** Define event envelopes, event types, delivery semantics, idempotency, rejection records, and forbidden payloads.
-12. **Banana Trunk scheduling.** Add queue lanes, priority policy, checkpoint-only pause/resume, resource locks, user message routing, and auditable schedule-decision records across Banana Bunches.
-13. **Per-bunch scheduler extension.** Add ready-node scheduling and parallelism inside one Banana Bunch only after serial policy validation is stable.
-14. **Second scenario.** Add one meaningfully different low-risk scenario to validate reuse of the runtime kernel.
+1. **Wrap the first Scenario Pack.** Represent the existing fixed channel metric path as `sales_channel_analysis` without broadening behavior.
+2. **Add Evaluation Contract schema and linting.** Require every enabled Scenario Pack to have a valid paired Evaluation Contract before the Planner can select it.
+3. **Centralize Banana Bunch identity and refs.** Introduce a Banana Bunch-aware identity and ref builder before replacing legacy `task_001` and `data_file_analysis` references.
+4. **Add minimal checkpoint ownership.** Introduce Banana Bunch Checkpoint Writer as the only writer for lifecycle continuity state; checkpoints store refs and phase metadata, not business evidence.
+5. **Make evaluation contract-driven.** Pin each Banana Bunch to a Scenario Pack and Evaluation Contract version, then run stage checks from that contract while preserving required baseline evaluators.
+6. **Persist and replay Blackboard state.** Move toward append-only durable events, structured entries, artifact versions, evaluations, gates, vocabulary suggestions, and replay snapshots.
+7. **Add Banana Trunk scheduling.** Add queues, priorities, resource locks, user-message routing, checkpoint-only pause/resume, and cross-Bunch access records only after the single-Bunch runtime is governed, checkpointed, and replayable.
+
+The second business scenario should wait until these seven phases prove that the first scenario can be added, governed, evaluated, checkpointed, and replayed without core runtime rewrites.
 
 ## Non-Goals For The First Implementation Pass
 
@@ -1486,10 +1482,11 @@ The first implementation pass should not include:
 - Parallel DAG execution.
 - Mid-tool-call preemption.
 - Speculative parallel execution across Bunches without explicit resource-lock policy.
+- Banana Trunk scheduling before single-Bunch Scenario Pack, Evaluation Contract, identity, checkpoint, and replay gates are stable.
 - Long-term industry knowledge storage.
 - Automatic memory-driven behavior changes.
 - Automatic activation of LLM-suggested rules.
-- A second business scenario.
+- A second business scenario before `sales_channel_analysis` is represented as a lint-passing Scenario Pack with a valid Evaluation Contract.
 - Cross-bunch evidence merging without explicit policy.
 - Cross-bunch writes from one Bunch into another Bunch Blackboard.
 - Direct Bunch-to-Bunch event delivery.
@@ -1507,8 +1504,13 @@ The current design is successful when:
 - The first scenario remains narrow and auditable.
 - Scenario policy, evaluation policy, runtime execution, and memory/checkpoint responsibilities are distinct.
 - Enabled Scenario Packs are backed by valid Evaluation Contracts and pass schema lint before the Planner can select them.
+- The first `sales_channel_analysis` Scenario Pack preserves existing v0.1 behavior without expanding capability.
+- Runtime ids and refs are created through a Banana Bunch-aware identity/ref layer rather than scattered hard-coded task refs.
+- Evaluation results cite the pinned Scenario Pack and Evaluation Contract versions.
 - Every final answer is backed by Banana Bunch Blackboard artifacts and Evaluation results.
+- Banana Bunch checkpoints are writer-owned continuity records and do not contain raw business evidence.
 - Human approval is required for ambiguous or policy-changing paths.
+- Durable Blackboard events and entries can replay completed, partial, blocked, and clarification paths.
 - Future scenarios can be added by extending Scenario Packs, Skills, evaluators, and tests without rewriting the runtime kernel.
 - Multiple business tasks can be represented as separate `banana_bunch_<id>` instances connected by Banana Trunk without mixing their private Banana Bunch Blackboards.
 - Every Banana Bunch has an explicit lifecycle state, every state transition creates an auditable checkpoint record, and terminal states are read-only for new business artifacts.
