@@ -973,6 +973,300 @@ The contract defines gate outcomes:
 
 No scenario may be `enabled` without a valid paired Evaluation Contract.
 
+## Scenario Pack And Evaluation Contract Schema
+
+Scenario Pack and Evaluation Contract definitions should be declaration files. The core runtime loads and validates them; it should not embed industry-specific business logic.
+
+The recommended layout is:
+
+```text
+scenarios/
+  sales_channel_analysis/
+    scenario.yaml
+    evaluation.yaml
+    vocabulary.yaml
+    artifact_schemas.yaml
+    test_suites.yaml
+```
+
+The first implementation may require only `scenario.yaml` and `evaluation.yaml`. The design should still reserve stable refs for vocabulary, artifact schemas, and test suites so new industries can be added without changing the runtime kernel.
+
+### Scenario Pack Schema
+
+A Scenario Pack declares the business capability boundary for one scenario.
+
+```yaml
+scenario_pack:
+  scenario_id: sales_channel_analysis
+  scenario_version: 0.1.0
+  status: enabled
+  display_name: Sales Channel Analysis
+  purpose: Rank a single-table channel metric from an uploaded CSV or XLSX file.
+
+  task_classification:
+    supported_task_types:
+      - metric_ranking
+      - simple_metric_comparison
+    allowed_planner_intents:
+      - rank_channels_by_metric
+      - compare_channel_metric
+    rejection_intents:
+      - multi_table_join
+      - freeform_forecast
+      - external_writeback
+
+  input_contract:
+    supported_file_types:
+      - csv
+      - xlsx
+    supported_table_shape: single_table
+    required_fields:
+      - channel
+    optional_fields:
+      - revenue
+      - orders
+      - visits
+    max_files: 1
+    max_rows: 100000
+
+  domain_vocabulary_ref: vocabulary.yaml
+  artifact_schema_ref: artifact_schemas.yaml
+  evaluation_contract_ref: evaluation.yaml
+
+  execution_policy:
+    concurrency: serial
+    max_retries_per_task: 2
+    max_running_sub_agents: 1
+    allow_partial_result: true
+    require_checkpoint_on_state_change: true
+
+  allowed_sub_agents:
+    - sub_agent_id: data_profile_agent
+      required: true
+    - sub_agent_id: metric_agent
+      required: true
+    - sub_agent_id: report_agent
+      required: true
+
+  allowed_skills:
+    - skill_id: tabular_data_profile
+      version_range: ">=0.1.0 <1.0.0"
+    - skill_id: channel_metric_compute
+      version_range: ">=0.1.0 <1.0.0"
+
+  allowed_tools:
+    - tool_id: local_file_reader
+      access: read_only
+      risk: low
+    - tool_id: dataframe_runtime
+      access: compute_only
+      risk: low
+
+  resource_policy:
+    required_locks:
+      - dataset:<fingerprint>
+    forbidden_locks:
+      - workspace_write
+      - external_network
+
+  human_gate_policy:
+    required_when:
+      - ambiguous_metric
+      - missing_required_field
+      - vocabulary_suggestion_requires_approval
+      - partial_result_before_final
+
+  final_report_policy:
+    required_sections:
+      - answer
+      - evidence
+      - limitations
+      - evaluation_summary
+    require_artifact_refs: true
+    require_warnings: true
+
+  test_policy:
+    golden_suite_ref: tests/golden.yaml
+    calibration_suite_ref: tests/calibration.yaml
+```
+
+Required Scenario Pack fields:
+
+| Field | Requirement |
+|---|---|
+| `scenario_id` | Globally unique, `snake_case`, stable across versions. |
+| `scenario_version` | Semantic version. |
+| `status` | One of `draft`, `candidate`, `enabled`, `deprecated`, or `disabled`. |
+| `task_classification` | Declares supported task types, planner intents, and rejection intents. |
+| `input_contract` | Declares accepted input shape and required fields. |
+| `evaluation_contract_ref` | Required before the scenario can become `enabled`. |
+| `execution_policy` | Declares concurrency, retry, partial-result, and checkpoint behavior. |
+| `allowed_sub_agents` | References registered Sub-Agent ids. |
+| `allowed_skills` | References registered Skills and compatible versions. |
+| `allowed_tools` | References ToolGateway tool policies. |
+| `human_gate_policy` | Declares when the scenario must ask the user or accountable reviewer. |
+| `final_report_policy` | Declares the required final report shape. |
+
+Scenario Pack status meanings:
+
+| Status | Meaning |
+|---|---|
+| `draft` | Editable and not runnable. |
+| `candidate` | Runnable only in tests, calibration, or explicit developer mode. |
+| `enabled` | May be selected by the Planner for new Bunches. |
+| `deprecated` | Existing Bunches may continue; new Bunches should not select it. |
+| `disabled` | Not runnable. |
+
+### Evaluation Contract Schema
+
+An Evaluation Contract declares the trust boundary for one or more compatible Scenario Pack versions.
+
+```yaml
+evaluation_contract:
+  contract_id: sales_channel_analysis_eval
+  contract_version: 0.1.0
+  status: enabled
+  applies_to:
+    scenario_id: sales_channel_analysis
+    scenario_version_range: ">=0.1.0 <0.2.0"
+
+  default_gate_action: block
+
+  allowed_gate_actions:
+    - pass
+    - pass_with_warning
+    - needs_more_evidence
+    - needs_clarification
+    - human_review
+    - return_partial
+    - block
+
+  checks:
+    - check_id: planner_intent_consistency
+      stage: planner
+      severity: blocking
+      evaluator: planner_intent_evaluator
+      required_inputs:
+        - user_request_ref
+        - selected_scenario_ref
+        - planner_trace_ref
+      pass_when:
+        - selected_intent_in_allowed_planner_intents
+      fail_action: block
+
+    - check_id: required_field_availability
+      stage: artifact
+      severity: blocking
+      evaluator: input_schema_evaluator
+      required_inputs:
+        - dataset_snapshot_ref
+        - scenario_input_contract_ref
+      pass_when:
+        - all_required_fields_present
+      fail_action: needs_clarification
+
+    - check_id: metric_recomputation
+      stage: artifact
+      severity: blocking
+      evaluator: metric_recompute_evaluator
+      required_inputs:
+        - metric_artifact_ref
+        - dataset_snapshot_ref
+      pass_when:
+        - recomputed_metric_matches_artifact
+      fail_action: block
+
+    - check_id: evidence_ref_coverage
+      stage: final_report
+      severity: blocking
+      evaluator: evidence_ref_evaluator
+      required_inputs:
+        - final_report_ref
+        - artifact_refs
+      pass_when:
+        - material_claims_have_evaluated_artifact_refs
+      fail_action: return_partial
+
+    - check_id: limitation_disclosure
+      stage: final_report
+      severity: warning
+      evaluator: limitation_evaluator
+      required_inputs:
+        - final_report_ref
+        - evaluation_entries_ref
+      pass_when:
+        - limitations_are_disclosed
+      fail_action: pass_with_warning
+
+  final_report_requirements:
+    must_cite_evaluated_artifacts: true
+    must_include_limitations: true
+    must_include_dataset_snapshot: true
+    must_include_metric_formula: true
+```
+
+Each check should use the same structure:
+
+| Field | Requirement |
+|---|---|
+| `check_id` | Unique within the contract. |
+| `stage` | One of `planner`, `artifact`, or `final_report`. |
+| `severity` | One of `blocking`, `warning`, or `advisory`. |
+| `evaluator` | Registered evaluator id. |
+| `required_inputs` | Artifact, trace, scenario, or report refs required by the evaluator. |
+| `pass_when` | Declarative pass condition names understood by the evaluator. |
+| `fail_action` | One value from `allowed_gate_actions`. |
+| `human_gate_reason` | Required when `fail_action` is `needs_clarification` or `human_review`. |
+
+Severity meanings:
+
+| Severity | Meaning |
+|---|---|
+| `blocking` | Failure prevents continuation or final answer. |
+| `warning` | Failure allows continuation, but warning must be preserved in artifacts and reports. |
+| `advisory` | Failure is recorded but does not affect execution. |
+
+### Enabled Lint Rules
+
+A Scenario Pack may become `enabled` only when these checks pass:
+
+- `scenario_id` is globally unique.
+- `scenario_version` is a semantic version.
+- `evaluation_contract_ref` points to a valid enabled Evaluation Contract.
+- The Evaluation Contract `applies_to.scenario_id` matches the Scenario Pack.
+- All `allowed_sub_agents` exist in the Sub-Agent registry.
+- All `allowed_skills` exist and version ranges are parseable.
+- All `allowed_tools` have ToolGateway policies.
+- `input_contract.required_fields` is not empty unless the scenario explicitly supports unstructured input.
+- `final_report_policy.require_artifact_refs` is `true`.
+- First implementation scenarios use `execution_policy.concurrency: serial`.
+- At least one blocking check exists for each stage: `planner`, `artifact`, and `final_report`.
+- Every `fail_action` is listed in `allowed_gate_actions`.
+- Any check with `fail_action: needs_clarification` or `human_review` declares `human_gate_reason`.
+- `status: enabled` does not reference draft evaluators, skills, tools, artifact schemas, or vocabularies.
+
+The lint result should be written as governance metadata. A failed lint blocks scenario activation, not merely scenario execution.
+
+### Runtime Loading Flow
+
+Scenario loading should follow this flow:
+
+```text
+load scenario registry
+-> load scenario.yaml
+-> validate Scenario Pack schema
+-> load evaluation.yaml
+-> validate Evaluation Contract schema
+-> run enabled lint rules
+-> verify referenced agents, skills, tools, vocabularies, artifact schemas, and test suites
+-> expose only enabled scenarios to Planner
+-> Planner selects scenario for a Bunch
+-> Bunch Main Agent binds Scenario Pack and Evaluation Contract
+-> Evaluation Runner enforces checks at planner, artifact, and final_report stages
+```
+
+The Planner may select from enabled Scenario Packs. It must not weaken the selected Evaluation Contract or choose a scenario whose lint result is failing.
+
 ## Planner Boundary
 
 The Planner produces candidates. It does not execute.
@@ -1169,7 +1463,7 @@ Power Banana should evolve in phases:
 2. **Banana Bunch identity.** Adopt `banana_bunch_<id>` as the task-run identity and define Banana Trunk, Banana Bunch Main Agent, Banana Bunch Sub-Agents, and Banana Bunch Blackboard terminology.
 3. **Banana Bunch lifecycle.** Define lifecycle states, transition authority, checkpoint records, terminal-state behavior, and pause/resume semantics.
 4. **Banana Bunch internal execution protocol.** Define Bunch task contracts, Sub-Agent input and output refs, artifact records, evaluation checkpoints, Human Gate insertion, retry policy, and internal forbidden operations.
-5. **Scenario schema.** Define Scenario Pack and Evaluation Contract schemas and lint rules.
+5. **Scenario schema.** Define Scenario Pack and Evaluation Contract declaration files, status model, enabled lint rules, check structure, and runtime loading flow.
 6. **Wrap first scenario.** Describe the existing channel metric path as `sales_channel_analysis` without broadening behavior.
 7. **Validate policy.** Enforce allowed sub-agents, skills, metrics, evaluators, gates, and serial concurrency inside one Banana Bunch.
 8. **Trunk and Bunch permissions.** Enforce default Bunch isolation, Trunk read levels, cross-bunch access records, and rejection of cross-bunch writes.
@@ -1202,6 +1496,8 @@ The first implementation pass should not include:
 - Event payloads that embed raw business evidence.
 - Industry-specific business rules hard-coded into the core runtime.
 - Sub-Agent outputs that bypass Bunch Blackboard artifact records.
+- Enabled scenarios without a valid paired Evaluation Contract.
+- Scenario activation that bypasses enabled lint rules.
 
 ## Success Criteria
 
@@ -1210,6 +1506,7 @@ The current design is successful when:
 - There is one clear implementation authority.
 - The first scenario remains narrow and auditable.
 - Scenario policy, evaluation policy, runtime execution, and memory/checkpoint responsibilities are distinct.
+- Enabled Scenario Packs are backed by valid Evaluation Contracts and pass schema lint before the Planner can select them.
 - Every final answer is backed by Banana Bunch Blackboard artifacts and Evaluation results.
 - Human approval is required for ambiguous or policy-changing paths.
 - Future scenarios can be added by extending Scenario Packs, Skills, evaluators, and tests without rewriting the runtime kernel.
