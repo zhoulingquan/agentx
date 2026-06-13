@@ -25,7 +25,7 @@ Older documents are retained as reference or historical material. When any docum
 | Runtime memory system | [Power Banana Memory System Design](superpowers/specs/2026-06-11-powerbanana-memory-system-design.md) |
 | GitHub workflow | [Repository Workflow](repository-workflow.md) |
 | Repository hygiene | [Repository Hygiene](repository-hygiene.md) |
-| Architecture source design | [AgentX v0.3 Design](enterprise_agent_design_v0.3.md) |
+| Historical architecture source | [AgentX v0.3 Design](enterprise_agent_design_v0.3.md) |
 
 ## Consolidated Design Scope
 

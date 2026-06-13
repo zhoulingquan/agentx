@@ -1,7 +1,7 @@
 # Power Banana Current Design
 
 Status: Current  
-Last updated: 2026-06-12  
+Last updated: 2026-06-13
 Implementation authority: This document is the source of truth for future Power Banana implementation work.
 
 ## Purpose
@@ -20,7 +20,6 @@ The repository may contain earlier runtime prototypes, evaluation cases, and des
 
 The current design is distilled from:
 
-- `docs/enterprise_agent_design.md`
 - `docs/enterprise_agent_design_v0.3.md`
 - `docs/superpowers/specs/2026-06-11-skill-governed-runtime-design.md`
 - `docs/superpowers/specs/2026-06-11-powerbanana-memory-system-design.md`
