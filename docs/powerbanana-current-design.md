@@ -24,6 +24,7 @@ The current design is distilled from:
 - `docs/superpowers/specs/2026-06-11-skill-governed-runtime-design.md`
 - `docs/superpowers/specs/2026-06-11-powerbanana-memory-system-design.md`
 - `docs/superpowers/specs/2026-06-13-powerbanana-scenario-contract-migration-design.md`
+- `docs/superpowers/specs/2026-06-13-powerbanana-scenario-agnostic-runtime-contract-design.md`
 - Earlier vocabulary, golden-case, and analysis-request specs under `docs/superpowers/specs/`
 
 When these documents conflict, this current design wins.
@@ -935,6 +936,8 @@ The runtime kernel includes Banana Trunk plus the per-Banana-Bunch runtime. It i
 
 The runtime kernel should reject any scenario, skill, planner output, or memory record that attempts to weaken these responsibilities.
 
+The normative runtime records, refs, Scenario Pack statuses, Evaluation Contract gate actions, registry fields, permission roles, error classes, and observability fields are defined in `docs/superpowers/specs/2026-06-13-powerbanana-scenario-agnostic-runtime-contract-design.md`. Future implementation plans should use that supplement before inventing new core object shapes.
+
 ## Scenario Pack Responsibilities
 
 A Scenario Pack declares:
@@ -963,7 +966,7 @@ Every enabled Evaluation Contract should bind at least these baseline checks:
 - Input or source snapshot presence and version.
 - Required field availability.
 - Evidence reference coverage.
-- Metric recomputation.
+- Artifact correctness or scenario-specific recomputation when derived results are produced.
 - Context security findings.
 - Final report consistency.
 
@@ -973,6 +976,7 @@ The contract defines gate outcomes:
 |---|---|
 | `pass` | Continue normally. |
 | `pass_with_warning` | Continue, but include warnings. |
+| `needs_more_evidence` | Pause until additional evidence is produced or supplied. |
 | `return_partial` | Return a partial answer with limitations. |
 | `needs_clarification` | Pause for user clarification or approval. |
 | `human_review` | Pause for review of risk or policy concerns. |
@@ -1096,7 +1100,7 @@ Required Scenario Pack fields:
 |---|---|
 | `scenario_id` | Globally unique, `snake_case`, stable across versions. |
 | `scenario_version` | Semantic version. |
-| `status` | One of `draft`, `candidate`, `enabled`, `deprecated`, or `disabled`. |
+| `status` | One of `draft`, `candidate`, `reference`, `enabled`, `deprecated`, or `disabled`. |
 | `task_classification` | Declares supported task types, planner intents, and rejection intents. |
 | `input_contract` | Declares accepted input shape and required fields. |
 | `evaluation_contract_ref` | Required before the scenario can become `enabled`. |
@@ -1113,6 +1117,7 @@ Scenario Pack status meanings:
 |---|---|
 | `draft` | Editable and not runnable. |
 | `candidate` | Runnable only in tests, calibration, or explicit developer mode. |
+| `reference` | Stable runtime fixture used for regression and contract validation; not Planner-selectable for production. |
 | `enabled` | May be selected by the Planner for new Bunches. |
 | `deprecated` | Existing Bunches may continue; new Bunches should not select it. |
 | `disabled` | Not runnable. |
@@ -1245,6 +1250,7 @@ A Scenario Pack may become `enabled` only when these checks pass:
 - Any check with `fail_action: needs_clarification` or `human_review` declares `human_gate_reason`.
 - `status: enabled` does not reference draft evaluators, skills, tools, artifact schemas, or vocabularies.
 - No scenario becomes `enabled` only because it is used as a prototype or regression fixture.
+- A `reference` scenario is not exposed to the production Planner.
 
 The lint result should be written as governance metadata. A failed lint blocks scenario activation, not merely scenario execution.
 
@@ -1465,8 +1471,8 @@ Future design work should follow this rule:
 
 Power Banana should evolve in phases:
 
-1. **Define the scenario-independent runtime kernel.** Stabilize Banana Bunch identity, lifecycle, Blackboard, ToolGateway, Evaluation Runner, Human Gate, and Checkpoint Writer boundaries without assuming a first production scenario.
-2. **Add Scenario Pack and Evaluation Contract schema/linting.** Require every enabled Scenario Pack to have a valid paired Evaluation Contract before the Planner can select it.
+1. **Define the scenario-independent runtime kernel.** Stabilize Banana Bunch identity, lifecycle, Blackboard, ToolGateway, Evaluation Runner, Human Gate, Checkpoint Writer, registry, permission, error, and observability contracts without assuming a first production scenario.
+2. **Add Scenario Pack and Evaluation Contract schema/linting.** Require every enabled Scenario Pack to have a valid paired Evaluation Contract before the Planner can select it. Include `reference` Scenario Pack status and the complete Evaluation Contract gate-action set.
 3. **Convert the existing data-analysis path into a reference scenario fixture.** Preserve existing behavior as a candidate or reference Scenario Pack for regression and compatibility testing, not as the chosen first product scenario.
 4. **Centralize Banana Bunch identity and refs.** Introduce a Banana Bunch-aware identity and ref builder before replacing legacy `task_001` and `data_file_analysis` references.
 5. **Add minimal checkpoint ownership.** Introduce Banana Bunch Checkpoint Writer as the only writer for lifecycle continuity state; checkpoints store refs and phase metadata, not business evidence.
@@ -1501,6 +1507,7 @@ The initial runtime pass should not include:
 - Sub-Agent outputs that bypass Bunch Blackboard artifact records.
 - Enabled scenarios without a valid paired Evaluation Contract.
 - Scenario activation that bypasses enabled lint rules.
+- Runtime implementation that invents new core record shapes outside the accepted runtime contract supplement.
 
 ## Success Criteria
 
@@ -1510,6 +1517,7 @@ The current design is successful when:
 - The runtime kernel is scenario-independent and auditable.
 - Scenario policy, evaluation policy, runtime execution, and memory/checkpoint responsibilities are distinct.
 - Enabled Scenario Packs are backed by valid Evaluation Contracts and pass schema lint before the Planner can select them.
+- Runtime records, refs, registries, permissions, errors, and observability fields are stable enough to drive implementation planning.
 - The current data-analysis prototype can run as a reference fixture without defining the platform's product scope.
 - Runtime ids and refs are created through a Banana Bunch-aware identity/ref layer rather than scattered hard-coded task refs.
 - Evaluation results cite the pinned Scenario Pack and Evaluation Contract versions.

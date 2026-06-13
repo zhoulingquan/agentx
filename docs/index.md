@@ -19,6 +19,7 @@ Older documents are retained as reference or historical material. When any docum
 | Task Blackboard | [Task Blackboard](blackboard.md) |
 | Golden cases and calibration | [Regression and Calibration](regression-and-calibration.md) |
 | Evaluation governance | [Evaluation Layer](evaluation-layer.md) |
+| Runtime contract completion | [Power Banana Scenario-Agnostic Runtime Contract Design](superpowers/specs/2026-06-13-powerbanana-scenario-agnostic-runtime-contract-design.md) |
 | Scenario-agnostic migration route | [Power Banana Scenario-Agnostic Runtime Migration Design](superpowers/specs/2026-06-13-powerbanana-scenario-contract-migration-design.md) |
 | Skill-governed runtime direction | [Skill-Governed Runtime Design](superpowers/specs/2026-06-11-skill-governed-runtime-design.md) |
 | Runtime memory system | [Power Banana Memory System Design](superpowers/specs/2026-06-11-powerbanana-memory-system-design.md) |
@@ -31,6 +32,7 @@ Older documents are retained as reference or historical material. When any docum
 The current design defines a scenario-agnostic enterprise agent runtime:
 
 - Banana Tree, Banana Trunk, and Banana Bunch runtime boundaries.
+- Scenario-agnostic runtime records, refs, permissions, errors, registries, and observability contracts.
 - Scenario Pack and Evaluation Contract schemas for bounded business workflows.
 - Deterministic candidate planning before DAG execution.
 - Strict plan validation before DAG execution.

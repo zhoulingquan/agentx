@@ -4,6 +4,8 @@ Status: Accepted Direction
 Current authority: `docs/powerbanana-current-design.md`
 Date: 2026-06-13
 
+Detailed runtime contract supplement: `docs/superpowers/specs/2026-06-13-powerbanana-scenario-agnostic-runtime-contract-design.md`
+
 ## Goal
 
 Define the near-term migration route for turning the current Power Banana v0.1 prototype into a scenario-agnostic enterprise agent runtime.
@@ -76,8 +78,8 @@ This creates visible platform structure early, but it risks adding concurrency b
 
 | Stage | Name | Primary Outcome | May Proceed When |
 |---|---|---|---|
-| 1 | Runtime kernel | Scenario-independent lifecycle, ownership, evidence, tool, gate, and artifact boundaries are explicit. | Kernel contracts can describe the current prototype without scenario-specific assumptions. |
-| 2 | Contract schema and linter | Enabled scenarios require valid Scenario Packs and paired Evaluation Contracts. | Invalid, unpaired, or prototype-only scenarios fail lint. |
+| 1 | Runtime kernel | Scenario-independent lifecycle, ownership, evidence, tool, gate, registry, permission, error, observability, and artifact boundaries are explicit. | Kernel contracts can describe the current prototype without scenario-specific assumptions. |
+| 2 | Contract schema and linter | Enabled scenarios require valid Scenario Packs and paired Evaluation Contracts. | Invalid, unpaired, reference-only, or prototype-only scenarios fail lint. |
 | 3 | Reference fixture | Existing data-analysis behavior is preserved as a reference scenario fixture, not product scope. | Current golden, planner, calibration, and vocabulary tests still pass through the fixture. |
 | 4 | Runtime identity and refs | `banana_bunch_<id>` refs are generated through one identity/ref layer. | No new code creates raw `task_001` refs directly. |
 | 5 | Minimal Checkpoint Writer | Lifecycle continuity is writer-owned and separate from business evidence. | Checkpoints record phase and refs only, not raw evidence. |
@@ -101,6 +103,8 @@ The runtime kernel owns:
 - Human Gate creation and resolution.
 - Checkpoint write requests.
 - Final or partial report assembly.
+- Component registry loading.
+- Permission, tenant, error, and observability contracts.
 
 The runtime kernel must not own:
 
@@ -115,6 +119,7 @@ The runtime kernel must not own:
 - The kernel contracts can describe the current data-analysis prototype and at least two hypothetical enterprise scenarios without changing kernel object names.
 - Runtime lifecycle objects do not contain a hard-coded `sales_channel_analysis`, `data_file_analysis`, or channel-metric assumption.
 - The current prototype can still expose planner trace, frozen plan, DAG trace, Blackboard entries, evaluation, and Human Gates.
+- Runtime record shapes and gate actions are defined by the runtime contract supplement rather than invented during implementation.
 
 ## Stage 2: Add Scenario Pack And Evaluation Contract Schema
 
@@ -191,6 +196,7 @@ The linter must block activation when:
 - A check that routes to clarification or human review lacks a human gate reason.
 - No blocking check exists for planner, artifact, or final-report stages.
 - A prototype or regression fixture attempts to become enabled only because it has existing tests.
+- A `reference` Scenario Pack is exposed to the production Planner.
 - A scenario tries to enable parallel execution in the initial runtime implementation pass.
 
 ### Stage 2 Acceptance
