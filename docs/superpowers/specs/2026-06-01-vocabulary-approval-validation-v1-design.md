@@ -1,5 +1,8 @@
 # Vocabulary Approval Validation v1 Design
 
+Status: Reference  
+Current authority: `docs/powerbanana-current-design.md`
+
 Vocabulary approval should not stop at writing one CSV row. This design makes approval safer by adding preview, post-write validation, and a generated golden case draft.
 
 ## Goals

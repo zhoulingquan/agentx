@@ -1,5 +1,8 @@
 # Enterprise Governed Agent 技术设计文档
 
+Status: Historical  
+Current authority: `docs/powerbanana-current-design.md`
+
 版本：v0.3  
 日期：2026-05-28  
 定位：面向企业级多场景应用的可治理 AI Agent 架构设计

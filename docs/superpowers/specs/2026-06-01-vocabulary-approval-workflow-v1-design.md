@@ -1,5 +1,8 @@
 # Vocabulary Approval Workflow v1 Design
 
+Status: Reference  
+Current authority: `docs/powerbanana-current-design.md`
+
 PowerBanana can already ask a pluggable vocabulary advisor for missing analysis terms, but those suggestions currently live only inside the run report. This design adds a small local approval workflow so users can review candidate terms before they become active CSV vocabulary.
 
 ## Goals

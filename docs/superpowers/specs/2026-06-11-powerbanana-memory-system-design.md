@@ -1,5 +1,8 @@
 # PowerBanana Memory System Design
 
+Status: Reference  
+Current authority: `docs/powerbanana-current-design.md`
+
 ## Goal
 
 PowerBanana needs a Memory System that supports enterprise business workflows without turning memory into an uncontrolled business knowledge store.

@@ -1,5 +1,8 @@
 # Golden Case Promotion v1 Design
 
+Status: Reference  
+Current authority: `docs/powerbanana-current-design.md`
+
 Vocabulary approval now creates local golden case drafts, but those drafts do not yet enter the regression suite. This design adds a promotion step for turning reviewed drafts into formal Planner golden cases.
 
 ## Goals

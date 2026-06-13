@@ -1,5 +1,8 @@
 # Enterprise Fixed-Workflow Agent 技术设计文档
 
+Status: Historical  
+Current authority: `docs/powerbanana-current-design.md`
+
 版本：v0.1  
 日期：2026-05-21  
 定位：面向企业级多场景应用的稳定型 AI Agent 架构设计

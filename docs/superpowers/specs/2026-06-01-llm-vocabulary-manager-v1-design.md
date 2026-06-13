@@ -1,5 +1,8 @@
 # LLM Vocabulary Manager v1 Design
 
+Status: Reference  
+Current authority: `docs/powerbanana-current-design.md`
+
 ## Goal
 
 PowerBanana should use an LLM-style advisor as a candidate generator for missing vocabulary, especially dynamic `group_by` terms, while keeping CSV mutation behind validation and user approval.

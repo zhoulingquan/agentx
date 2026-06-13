@@ -1,5 +1,8 @@
 # Skill-Governed Runtime Design
 
+Status: Reference  
+Current authority: `docs/powerbanana-current-design.md`
+
 ## Goal
 
 PowerBanana should evolve from a fixed Phase 1 data-analysis workflow into a more open governed-agent runtime. The core runtime should stay responsible for hard safety and audit boundaries, while business scenarios should be extended through versioned Skills and Scenario Packs.

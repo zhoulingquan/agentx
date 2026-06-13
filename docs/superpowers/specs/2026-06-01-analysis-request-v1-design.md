@@ -1,5 +1,8 @@
 # AnalysisRequest v1 Design
 
+Status: Reference  
+Current authority: `docs/powerbanana-current-design.md`
+
 ## Goal
 
 PowerBanana should turn supported user questions into a structured `AnalysisRequest` before the DAG runs, then execute simple grouped metric analysis for conversion rate, revenue, orders, and visits without using an LLM.

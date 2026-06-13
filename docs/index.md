@@ -1,58 +1,34 @@
-# PowerBanana Documentation
+# Power Banana Design Documentation
 
-PowerBanana is a v0.1 reference agent built from the AgentX v0.3 governed-agent design. It currently focuses on one deterministic Phase 1 path: ranking channels by conversion rate, revenue, orders, or visits from a CSV or simple XLSX dataset.
+Power Banana is currently in the design-convergence stage. The repository keeps historical and topic-specific design documents, but future implementation work should use one current authority.
 
-## Quick Start
+## Current Authority
 
-Run locally:
+Use [Power Banana Current Design](powerbanana-current-design.md) as the source of truth for future implementation.
 
-```powershell
-cd C:\MyProject\AgentX
-python -m powerbanana.cli --interactive
-```
-
-Run with Docker:
-
-```powershell
-cd C:\MyProject\AgentX
-docker build -t powerbanana .
-docker run --rm -it -v ${PWD}:/data powerbanana
-```
-
-Use a CSV with these columns:
-
-```csv
-channel,visits,orders,revenue
-email,100,20,500
-ads,200,30,900
-organic,80,8,160
-```
-
-Typical question:
-
-```text
-Which channel has the highest revenue?
-```
+Older documents are retained as reference or historical material. When any document conflicts with the current design, the current design wins.
 
 ## Project Areas
 
 | Area | Page |
 |---|---|
+| Current implementation authority | [Power Banana Current Design](powerbanana-current-design.md) |
 | Running and deployment | [Deployment](deployment.md) |
 | Planner boundary | [Planner](planner.md) |
 | Planner lexicon | [Planner Lexicon](planner-lexicon.md) |
 | Task Blackboard | [Task Blackboard](blackboard.md) |
 | Golden cases and calibration | [Regression and Calibration](regression-and-calibration.md) |
 | Evaluation governance | [Evaluation Layer](evaluation-layer.md) |
+| Near-term design adjustment | [Power Banana Near-Term Design Adjustment](superpowers/specs/2026-06-12-powerbanana-near-term-design-adjustment.md) |
 | Skill-governed runtime direction | [Skill-Governed Runtime Design](superpowers/specs/2026-06-11-skill-governed-runtime-design.md) |
-| Runtime memory system | [PowerBanana Memory System Design](superpowers/specs/2026-06-11-powerbanana-memory-system-design.md) |
+| Runtime memory system | [Power Banana Memory System Design](superpowers/specs/2026-06-11-powerbanana-memory-system-design.md) |
 | GitHub workflow | [Repository Workflow](repository-workflow.md) |
 | Repository hygiene | [Repository Hygiene](repository-hygiene.md) |
 | Architecture source design | [AgentX v0.3 Design](enterprise_agent_design_v0.3.md) |
 
-## Current Scope
+## Consolidated Design Scope
 
-Supported:
+The current design keeps the first scenario intentionally narrow:
 
 - CSV files.
 - Simple XLSX files when `openpyxl` is installed.
@@ -67,7 +43,7 @@ Supported:
 - Task DAG trace, Blackboard events, Step trace, Evaluation result.
 - Golden cases, calibration cases, and replay snapshots.
 
-Not supported yet:
+Out of scope for the first implementation pass:
 
 - General natural-language analytics.
 - Multi-table joins.

@@ -1,5 +1,8 @@
 # End-to-End Golden Promotion v1 Design
 
+Status: Reference  
+Current authority: `docs/powerbanana-current-design.md`
+
 Planner golden promotion proves that the Planner can classify and parse an approved vocabulary term. End-to-end golden promotion proves the full PowerBanana path can answer a real question against a real synthetic CSV fixture.
 
 ## Goals
