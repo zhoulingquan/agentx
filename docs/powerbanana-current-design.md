@@ -6,7 +6,7 @@ Implementation authority: This document is the source of truth for future Power 
 
 ## Purpose
 
-Power Banana is a governed-agent reference design. Its near-term goal is not to become a general-purpose analytics assistant. Its near-term goal is to prove that a narrow business workflow can be planned, executed, evaluated, audited, paused for human approval, and later expanded through explicit scenario policy.
+Power Banana is a governed enterprise-agent runtime design for multiple application scenarios. Its near-term goal is not to choose a single product scenario too early. Its near-term goal is to prove that a reusable runtime kernel can host governed business workflows that are planned, executed, evaluated, audited, paused for human approval, and expanded through explicit scenario policy.
 
 This document consolidates the current valid design decisions from the existing Power Banana and AgentX design documents. Older documents remain useful references, but future implementation should follow this document unless it is explicitly updated.
 
@@ -23,10 +23,12 @@ The current design is distilled from:
 - `docs/enterprise_agent_design_v0.3.md`
 - `docs/superpowers/specs/2026-06-11-skill-governed-runtime-design.md`
 - `docs/superpowers/specs/2026-06-11-powerbanana-memory-system-design.md`
-- `docs/superpowers/specs/2026-06-12-powerbanana-near-term-design-adjustment.md`
+- `docs/superpowers/specs/2026-06-13-powerbanana-scenario-contract-migration-design.md`
 - Earlier vocabulary, golden-case, and analysis-request specs under `docs/superpowers/specs/`
 
 When these documents conflict, this current design wins.
+
+The earlier `docs/superpowers/specs/2026-06-12-powerbanana-near-term-design-adjustment.md` document is retained as historical context only. Its assumption that the current data-analysis path should become the first enabled Scenario Pack has been superseded. The current direction is runtime-kernel first, with the data-analysis path treated as a reference prototype until a real first application scenario is selected.
 
 ## Product Positioning
 
@@ -35,7 +37,8 @@ Power Banana should be designed as:
 - A governed workflow agent for repeatable enterprise tasks.
 - A scenario-based runtime where business behavior is declared through Scenario Packs.
 - A system that treats uploaded data, user instructions, LLM output, and memory as separately trusted inputs.
-- A reference implementation that starts with a narrow single-table data-analysis workflow.
+- A reusable runtime kernel that can support multiple fixed, semi-fixed, or governed autonomous business workflows.
+- A platform where the current data-analysis code path is a reference prototype and regression fixture, not the selected first product scenario.
 
 Power Banana should not be designed as:
 
@@ -44,6 +47,7 @@ Power Banana should not be designed as:
 - A general SQL/database analytics engine.
 - A memory-driven business knowledge system.
 - A system where LLM suggestions become active without validation and human approval.
+- A product whose core runtime is shaped around one assumed first application scenario.
 
 ## Core Principle
 
@@ -94,7 +98,7 @@ Every business task should receive a stable Banana Bunch id:
 
 ```yaml
 banana_bunch_id: banana_bunch_001
-scenario_id: sales_channel_analysis
+scenario_id: pending_scenario_binding
 banana_bunch_status: running
 banana_bunch_main_agent_id: banana_bunch_main_agent@banana_bunch_001
 banana_bunch_blackboard_ref: bunch-blackboard://banana_bunch_001
@@ -188,7 +192,7 @@ Banana Trunk scheduling decides which Banana Bunch may advance next. It coordina
 The scheduler should use a conservative default:
 
 - Multiple Banana Bunches may exist at the same time.
-- A first implementation may run only one active Bunch at a time with `max_running_bunches = 1`.
+- An initial runtime implementation may run only one active Bunch at a time with `max_running_bunches = 1`.
 - Additional Bunches wait in Trunk-managed queues until lifecycle state, priority, and resource locks allow them to run.
 - Future implementations may raise the running limit when Scenario Pack policies and resource locks prove the Bunches are independent.
 
@@ -370,7 +374,7 @@ A Bunch Main Agent should not send events directly to another Bunch Main Agent. 
 
 ### Delivery Semantics
 
-The first implementation should treat events as durable append-only records with at-least-once delivery semantics:
+The initial runtime implementation should treat events as durable append-only records with at-least-once delivery semantics:
 
 - The receiver must deduplicate by `event_id`.
 - The receiver must reject stale events that conflict with the current lifecycle state.
@@ -797,7 +801,7 @@ Failures should be typed so the Bunch Main Agent can respond consistently:
 | `policy_blocked` | Scenario, tool, data, or compliance policy rejects the path. | Stop and move to `blocked`. |
 | `insufficient_evidence` | Available evidence cannot support the requested claim. | Ask for more evidence, create Human Gate, or return partial. |
 
-Retries should be bounded. A first implementation may allow at most two retries per `bunch_task` before the Evaluation Runner decides whether the Bunch should return partial, block, or fail.
+Retries should be bounded. An initial runtime implementation may allow at most two retries per `bunch_task` before the Evaluation Runner decides whether the Bunch should return partial, block, or fail.
 
 ### Internal Forbidden Operations
 
@@ -849,14 +853,18 @@ Examples:
 
 The core runtime should not become a container for industry rules. New industries should be added by extending Scenario Packs, Evaluation Contracts, vocabularies, tools, artifact schemas, and test suites.
 
-## Current First Scenario
+## Reference Prototype Status
 
-The first Scenario Pack should be:
+No first production Scenario Pack is currently selected.
+
+The existing data-analysis workflow should be treated as a reference prototype and regression fixture. It proves useful runtime mechanics, including deterministic planning, plan validation, ToolGateway-mediated data access, Blackboard entries, metric recomputation, Human Gates, and vocabulary approval. It must not define the platform's product scope.
+
+If the prototype is represented as a Scenario Pack for tests, it should be marked `candidate` or `reference`, not assumed to be the first enabled product scenario:
 
 ```yaml
 scenario_id: sales_channel_analysis
 scenario_version: 0.1.0
-status: enabled
+status: candidate
 purpose: Rank a single-table channel metric from an uploaded CSV or simple XLSX file.
 supported_file_types:
   - csv
@@ -871,7 +879,7 @@ default_group_by: channel
 execution_mode: serial
 ```
 
-This first scenario intentionally preserves a narrow path. It ranks a supported metric by a supported group field from one uploaded table.
+The first enabled production scenario should be chosen later by business priority and validation value. Candidate scenarios include data analysis, contract review, ticket triage, finance review, sales operations, knowledge retrieval, or approval-flow assistance.
 
 ## High-Level Architecture
 
@@ -949,10 +957,10 @@ A Scenario Pack should not contain arbitrary executable code. If executable beha
 
 Every enabled Scenario Pack must have a paired Evaluation Contract.
 
-For the first scenario, the Evaluation Contract should bind these checks:
+Every enabled Evaluation Contract should bind at least these baseline checks:
 
 - Planner intent consistency.
-- Dataset snapshot presence and version.
+- Input or source snapshot presence and version.
 - Required field availability.
 - Evidence reference coverage.
 - Metric recomputation.
@@ -980,7 +988,7 @@ The recommended layout is:
 
 ```text
 scenarios/
-  sales_channel_analysis/
+  <scenario_id>/
     scenario.yaml
     evaluation.yaml
     vocabulary.yaml
@@ -988,7 +996,7 @@ scenarios/
     test_suites.yaml
 ```
 
-The first implementation may require only `scenario.yaml` and `evaluation.yaml`. The design should still reserve stable refs for vocabulary, artifact schemas, and test suites so new industries can be added without changing the runtime kernel.
+The initial runtime implementation may require only `scenario.yaml` and `evaluation.yaml`. The design should still reserve stable refs for vocabulary, artifact schemas, and test suites so application scenarios can be added without changing the runtime kernel.
 
 ### Scenario Pack Schema
 
@@ -996,37 +1004,31 @@ A Scenario Pack declares the business capability boundary for one scenario.
 
 ```yaml
 scenario_pack:
-  scenario_id: sales_channel_analysis
+  scenario_id: example_business_scenario
   scenario_version: 0.1.0
-  status: enabled
-  display_name: Sales Channel Analysis
-  purpose: Rank a single-table channel metric from an uploaded CSV or XLSX file.
+  status: candidate
+  display_name: Example Business Scenario
+  purpose: Demonstrate the structure required for a governed enterprise workflow.
 
   task_classification:
     supported_task_types:
-      - metric_ranking
-      - simple_metric_comparison
+      - governed_business_task
     allowed_planner_intents:
-      - rank_channels_by_metric
-      - compare_channel_metric
+      - supported_business_request
     rejection_intents:
-      - multi_table_join
-      - freeform_forecast
-      - external_writeback
+      - unsupported_external_writeback
+      - unsupported_realtime_decision
 
   input_contract:
     supported_file_types:
       - csv
+      - txt
+      - pdf
       - xlsx
-    supported_table_shape: single_table
+    supported_input_shape: scenario_defined
     required_fields:
-      - channel
-    optional_fields:
-      - revenue
-      - orders
-      - visits
+      - scenario_defined_required_input
     max_files: 1
-    max_rows: 100000
 
   domain_vocabulary_ref: vocabulary.yaml
   artifact_schema_ref: artifact_schemas.yaml
@@ -1040,17 +1042,17 @@ scenario_pack:
     require_checkpoint_on_state_change: true
 
   allowed_sub_agents:
-    - sub_agent_id: data_profile_agent
+    - sub_agent_id: intake_agent
       required: true
-    - sub_agent_id: metric_agent
+    - sub_agent_id: work_agent
       required: true
     - sub_agent_id: report_agent
       required: true
 
   allowed_skills:
-    - skill_id: tabular_data_profile
+    - skill_id: scenario_input_profile
       version_range: ">=0.1.0 <1.0.0"
-    - skill_id: channel_metric_compute
+    - skill_id: scenario_task_execute
       version_range: ">=0.1.0 <1.0.0"
 
   allowed_tools:
@@ -1063,16 +1065,15 @@ scenario_pack:
 
   resource_policy:
     required_locks:
-      - dataset:<fingerprint>
+      - input:<fingerprint>
     forbidden_locks:
-      - workspace_write
       - external_network
 
   human_gate_policy:
     required_when:
-      - ambiguous_metric
-      - missing_required_field
-      - vocabulary_suggestion_requires_approval
+      - ambiguous_request
+      - missing_required_input
+      - policy_change_requires_approval
       - partial_result_before_final
 
   final_report_policy:
@@ -1122,11 +1123,11 @@ An Evaluation Contract declares the trust boundary for one or more compatible Sc
 
 ```yaml
 evaluation_contract:
-  contract_id: sales_channel_analysis_eval
+  contract_id: example_business_scenario_eval
   contract_version: 0.1.0
-  status: enabled
+  status: candidate
   applies_to:
-    scenario_id: sales_channel_analysis
+    scenario_id: example_business_scenario
     scenario_version_range: ">=0.1.0 <0.2.0"
 
   default_gate_action: block
@@ -1164,15 +1165,15 @@ evaluation_contract:
         - all_required_fields_present
       fail_action: needs_clarification
 
-    - check_id: metric_recomputation
+    - check_id: artifact_correctness
       stage: artifact
       severity: blocking
-      evaluator: metric_recompute_evaluator
+      evaluator: scenario_artifact_evaluator
       required_inputs:
-        - metric_artifact_ref
-        - dataset_snapshot_ref
+        - scenario_artifact_ref
+        - source_snapshot_ref
       pass_when:
-        - recomputed_metric_matches_artifact
+        - scenario_artifact_matches_source_evidence
       fail_action: block
 
     - check_id: evidence_ref_coverage
@@ -1200,8 +1201,8 @@ evaluation_contract:
   final_report_requirements:
     must_cite_evaluated_artifacts: true
     must_include_limitations: true
-    must_include_dataset_snapshot: true
-    must_include_metric_formula: true
+    must_include_source_snapshot: true
+    must_include_evaluation_summary: true
 ```
 
 Each check should use the same structure:
@@ -1238,11 +1239,12 @@ A Scenario Pack may become `enabled` only when these checks pass:
 - All `allowed_tools` have ToolGateway policies.
 - `input_contract.required_fields` is not empty unless the scenario explicitly supports unstructured input.
 - `final_report_policy.require_artifact_refs` is `true`.
-- First implementation scenarios use `execution_policy.concurrency: serial`.
+- Initial runtime scenarios use `execution_policy.concurrency: serial`.
 - At least one blocking check exists for each stage: `planner`, `artifact`, and `final_report`.
 - Every `fail_action` is listed in `allowed_gate_actions`.
 - Any check with `fail_action: needs_clarification` or `human_review` declares `human_gate_reason`.
 - `status: enabled` does not reference draft evaluators, skills, tools, artifact schemas, or vocabularies.
+- No scenario becomes `enabled` only because it is used as a prototype or regression fixture.
 
 The lint result should be written as governance metadata. A failed lint blocks scenario activation, not merely scenario execution.
 
@@ -1289,10 +1291,12 @@ The Planner must not:
 
 ## Task Plan And Scheduler
 
-Inside one Banana Bunch, the first scenario uses a serial plan:
+Inside one Banana Bunch, the selected Scenario Pack defines the allowed plan shape.
+
+The conservative default is a serial plan:
 
 ```text
-data_profile_agent -> data_analysis_agent -> report_agent
+intake_agent -> work_agent -> report_agent
 ```
 
 Parallel scheduling is a later design phase. The current design should keep serial execution until Scenario Pack schema, Evaluation Contract validation, and checkpoint ownership are stable.
@@ -1321,7 +1325,9 @@ Each Skill should declare:
 - Required evaluators.
 - Idempotency expectations.
 
-The first scenario should use a small skill set:
+Each enabled scenario should declare a small allowed Skill set. The runtime should not assume any domain Skill is globally available.
+
+The current data-analysis prototype uses:
 
 - `compute_grouped_metric@0.1.0`
 - `rank_metric_values@0.1.0`
@@ -1357,7 +1363,7 @@ Events answer what happened. Entries answer what structured fact now exists. Mat
 
 ToolGateway owns external and file access.
 
-For the first scenario, it should support:
+For the current prototype, it supports:
 
 - Read-only CSV loading.
 - Read-only simple XLSX loading.
@@ -1423,19 +1429,19 @@ Memory must never override:
 
 Human Gates are required when the system cannot safely continue autonomously.
 
-The first scenario needs gates for:
+Common Human Gate triggers include:
 
-- Ambiguous metric questions.
+- Ambiguous user requests.
 - Unsupported question types.
-- Missing grouping vocabulary.
-- Vocabulary suggestions that require approval.
+- Missing required input.
+- Vocabulary, rule, or policy suggestions that require approval.
 - Security or evaluation conditions requiring human review.
 
 Human Gate records should include reason, prompt, status, and related refs. Final reports should expose pending gates clearly.
 
 ## Regression And Calibration
 
-The first scenario should preserve four kinds of tests:
+Each scenario should define or inherit these test groups:
 
 - Planner cases: intent classification and structured request parsing.
 - Golden cases: end-to-end question, dataset, answer, and analysis result behavior.
@@ -1459,19 +1465,19 @@ Future design work should follow this rule:
 
 Power Banana should evolve in phases:
 
-1. **Wrap the first Scenario Pack.** Represent the existing fixed channel metric path as `sales_channel_analysis` without broadening behavior.
-2. **Add Evaluation Contract schema and linting.** Require every enabled Scenario Pack to have a valid paired Evaluation Contract before the Planner can select it.
-3. **Centralize Banana Bunch identity and refs.** Introduce a Banana Bunch-aware identity and ref builder before replacing legacy `task_001` and `data_file_analysis` references.
-4. **Add minimal checkpoint ownership.** Introduce Banana Bunch Checkpoint Writer as the only writer for lifecycle continuity state; checkpoints store refs and phase metadata, not business evidence.
-5. **Make evaluation contract-driven.** Pin each Banana Bunch to a Scenario Pack and Evaluation Contract version, then run stage checks from that contract while preserving required baseline evaluators.
-6. **Persist and replay Blackboard state.** Move toward append-only durable events, structured entries, artifact versions, evaluations, gates, vocabulary suggestions, and replay snapshots.
-7. **Add Banana Trunk scheduling.** Add queues, priorities, resource locks, user-message routing, checkpoint-only pause/resume, and cross-Bunch access records only after the single-Bunch runtime is governed, checkpointed, and replayable.
+1. **Define the scenario-independent runtime kernel.** Stabilize Banana Bunch identity, lifecycle, Blackboard, ToolGateway, Evaluation Runner, Human Gate, and Checkpoint Writer boundaries without assuming a first production scenario.
+2. **Add Scenario Pack and Evaluation Contract schema/linting.** Require every enabled Scenario Pack to have a valid paired Evaluation Contract before the Planner can select it.
+3. **Convert the existing data-analysis path into a reference scenario fixture.** Preserve existing behavior as a candidate or reference Scenario Pack for regression and compatibility testing, not as the chosen first product scenario.
+4. **Centralize Banana Bunch identity and refs.** Introduce a Banana Bunch-aware identity and ref builder before replacing legacy `task_001` and `data_file_analysis` references.
+5. **Add minimal checkpoint ownership.** Introduce Banana Bunch Checkpoint Writer as the only writer for lifecycle continuity state; checkpoints store refs and phase metadata, not business evidence.
+6. **Make evaluation contract-driven.** Pin each Banana Bunch to a Scenario Pack and Evaluation Contract version, then run stage checks from that contract while preserving required baseline evaluators.
+7. **Persist and replay Blackboard state.** Move toward append-only durable events, structured entries, artifact versions, evaluations, gates, vocabulary suggestions, and replay snapshots.
+8. **Select the first production scenario.** Choose one application scenario only after the runtime kernel, scenario schema, evaluation contract, identity/ref layer, checkpoint model, and replay model are stable.
+9. **Add Banana Trunk scheduling.** Add queues, priorities, resource locks, user-message routing, checkpoint-only pause/resume, and cross-Bunch access records only after single-Bunch execution is governed, checkpointed, replayable, and scenario-independent.
 
-The second business scenario should wait until these seven phases prove that the first scenario can be added, governed, evaluated, checkpointed, and replayed without core runtime rewrites.
+## Non-Goals For The Initial Runtime Pass
 
-## Non-Goals For The First Implementation Pass
-
-The first implementation pass should not include:
+The initial runtime pass should not include:
 
 - General natural-language analytics.
 - LLM planning.
@@ -1485,7 +1491,8 @@ The first implementation pass should not include:
 - Long-term industry knowledge storage.
 - Automatic memory-driven behavior changes.
 - Automatic activation of LLM-suggested rules.
-- A second business scenario before `sales_channel_analysis` is represented as a lint-passing Scenario Pack with a valid Evaluation Contract.
+- Selecting a first production scenario before the scenario-independent runtime kernel and schema contracts are stable.
+- Treating the current data-analysis prototype as the product's first required scenario.
 - Cross-bunch evidence merging without explicit policy.
 - Cross-bunch writes from one Bunch into another Bunch Blackboard.
 - Direct Bunch-to-Bunch event delivery.
@@ -1500,10 +1507,10 @@ The first implementation pass should not include:
 The current design is successful when:
 
 - There is one clear implementation authority.
-- The first scenario remains narrow and auditable.
+- The runtime kernel is scenario-independent and auditable.
 - Scenario policy, evaluation policy, runtime execution, and memory/checkpoint responsibilities are distinct.
 - Enabled Scenario Packs are backed by valid Evaluation Contracts and pass schema lint before the Planner can select them.
-- The first `sales_channel_analysis` Scenario Pack preserves existing v0.1 behavior without expanding capability.
+- The current data-analysis prototype can run as a reference fixture without defining the platform's product scope.
 - Runtime ids and refs are created through a Banana Bunch-aware identity/ref layer rather than scattered hard-coded task refs.
 - Evaluation results cite the pinned Scenario Pack and Evaluation Contract versions.
 - Every final answer is backed by Banana Bunch Blackboard artifacts and Evaluation results.

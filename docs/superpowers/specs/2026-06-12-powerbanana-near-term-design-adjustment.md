@@ -1,7 +1,10 @@
-# PowerBanana Near-Term Design Adjustment
+# PowerBanana Near-Term Design Adjustment (Superseded)
 
-Status: Reference  
+Status: Superseded Reference
 Current authority: `docs/powerbanana-current-design.md`
+Superseded by: `docs/superpowers/specs/2026-06-13-powerbanana-scenario-contract-migration-design.md`
+
+This document assumed the data-analysis prototype would become the first governed Scenario Pack. That assumption is no longer current. The accepted direction is scenario-agnostic runtime-kernel first, with the data-analysis path retained as a reference prototype and regression fixture.
 
 ## Goal
 

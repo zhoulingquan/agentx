@@ -19,8 +19,7 @@ Older documents are retained as reference or historical material. When any docum
 | Task Blackboard | [Task Blackboard](blackboard.md) |
 | Golden cases and calibration | [Regression and Calibration](regression-and-calibration.md) |
 | Evaluation governance | [Evaluation Layer](evaluation-layer.md) |
-| Near-term design adjustment | [Power Banana Near-Term Design Adjustment](superpowers/specs/2026-06-12-powerbanana-near-term-design-adjustment.md) |
-| Scenario-contract migration route | [Power Banana Scenario Contract Migration Design](superpowers/specs/2026-06-13-powerbanana-scenario-contract-migration-design.md) |
+| Scenario-agnostic migration route | [Power Banana Scenario-Agnostic Runtime Migration Design](superpowers/specs/2026-06-13-powerbanana-scenario-contract-migration-design.md) |
 | Skill-governed runtime direction | [Skill-Governed Runtime Design](superpowers/specs/2026-06-11-skill-governed-runtime-design.md) |
 | Runtime memory system | [Power Banana Memory System Design](superpowers/specs/2026-06-11-powerbanana-memory-system-design.md) |
 | GitHub workflow | [Repository Workflow](repository-workflow.md) |
@@ -29,23 +28,30 @@ Older documents are retained as reference or historical material. When any docum
 
 ## Consolidated Design Scope
 
-The current design keeps the first scenario intentionally narrow:
+The current design defines a scenario-agnostic enterprise agent runtime:
+
+- Banana Tree, Banana Trunk, and Banana Bunch runtime boundaries.
+- Scenario Pack and Evaluation Contract schemas for bounded business workflows.
+- Deterministic candidate planning before DAG execution.
+- Strict plan validation before DAG execution.
+- Governed planner lexicon and scenario classification.
+- Runtime-owned Blackboard events, artifact versions, evaluations, gates, and checkpoints.
+- ToolGateway mediation, context security, Human Gates, and report evidence support.
+- Golden cases, calibration cases, replay snapshots, and contract linting.
+
+The current data-analysis path remains a reference prototype and regression fixture for:
 
 - CSV files.
 - Simple XLSX files when `openpyxl` is installed.
 - Single-table metric ranking for conversion rate, revenue, orders, and visits.
-- Deterministic no-LLM execution by default.
-- Deterministic candidate planning before DAG execution.
-- Strict plan validation before DAG execution.
-- Governed planner lexicon for scenario classification.
 - Optional real LLM vocabulary advisor for candidate-only missing-term suggestions.
 - Local vocabulary suggestion approval flow with dry-run, validation, golden case drafts, Planner promotion, and end-to-end golden promotion.
 - Vocabulary advisor golden cases for testing LLM-style suggestion safety without real API calls.
-- Task DAG trace, Blackboard events, Step trace, Evaluation result.
-- Golden cases, calibration cases, and replay snapshots.
 
-Out of scope for the first implementation pass:
+Out of scope for the initial runtime implementation pass:
 
+- Selecting the first production scenario before runtime and contract boundaries are stable.
+- Treating the data-analysis prototype as the mandatory first product scenario.
 - General natural-language analytics.
 - Multi-table joins.
 - Database connections.
